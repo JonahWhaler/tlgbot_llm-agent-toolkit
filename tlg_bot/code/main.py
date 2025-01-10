@@ -47,6 +47,9 @@ def run_bot(bot: Application) -> None:
     )
     bot.add_handler(CommandHandler("characters", handlers.show_character_menu), group=1)
     bot.add_handler(CommandHandler("models", handlers.show_model_menu), group=1)
+    bot.add_handler(
+        CommandHandler("creativity", handlers.show_creativity_menu), group=1
+    )
     # Buttons
     bot.add_handler(
         telegram.ext.CallbackQueryHandler(
@@ -56,6 +59,11 @@ def run_bot(bot: Application) -> None:
     bot.add_handler(
         telegram.ext.CallbackQueryHandler(
             handlers.set_character_handler, pattern=r"^set_character"
+        )
+    )
+    bot.add_handler(
+        telegram.ext.CallbackQueryHandler(
+            handlers.set_creativity_handler, pattern=r"^set_creativity"
         )
     )
 

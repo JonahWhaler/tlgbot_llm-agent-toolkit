@@ -17,10 +17,7 @@ class LLMFactory:
         pass
 
     def create_chat_llm(
-        self,
-        platform: str,
-        model_name: str,
-        system_prompt: str,
+        self, platform: str, model_name: str, system_prompt: str, temperature: float
     ) -> Core:
         supported_providers = ["ollama", "openai", "deepseek"]
         if platform not in supported_providers:
@@ -33,6 +30,8 @@ class LLMFactory:
             raise ValueError(f"Invalid model. Supported models: {supported_models}")
 
         params = PARAMETER["chatcompletion"][platform]
+        params["temperature"] = temperature
+        logger.info("Creating chat LLM: %s", params)
         config = ChatCompletionConfig(
             name=model_name, return_n=1, max_iteration=1, **params
         )
@@ -70,6 +69,7 @@ class LLMFactory:
         platform: str,
         model_name: str,
         system_prompt: str,
+        temperature: float,
     ) -> ImageInterpreter:
         supported_providers = ["ollama", "openai"]
         if platform not in supported_providers:
@@ -82,6 +82,7 @@ class LLMFactory:
             raise ValueError(f"Invalid model. Supported models: {supported_models}")
 
         params = PARAMETER["imageinterpretation"][platform]
+        params["temperature"] = temperature
         config = ChatCompletionConfig(
             name=model_name, return_n=1, max_iteration=1, **params
         )

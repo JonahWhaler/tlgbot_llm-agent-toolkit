@@ -69,6 +69,7 @@ def register_user(identifier: str) -> None:
         "platform_i2t": pi2t,
         "model_i2t": mi2t,
         "character": DEFAULT_CHARACTER,
+        "creativity": 0.7,
     }
     db.set(identifier, uprofile)
 
@@ -113,14 +114,112 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
         character_name = CHARACTER[character]["name"]
         system_prompt = CHARACTER[character]["system_prompt"]
         chatcompletion = uprofile["model_t2t"]
+        creativity = uprofile["creativity"]
 
-        output_string = f"*Character*: {character_name} \n\n*AI Model*: {chatcompletion} \n\n*System Prompt*:\n"
+        if creativity == 0.0:
+            creativity_level = "zero"
+        elif creativity == 0.3:
+            creativity_level = "low"
+        elif creativity == 0.7:
+            creativity_level = "medium"
+        elif creativity == 1.0:
+            creativity_level = "high"
+        else:  # creativity == 1.2:
+            creativity_level = "extreme"
+
+        output_string = f"*Character*: {character_name} \n\n*AI Model*: {chatcompletion} \n*Creativity*: {creativity_level} \n\n"
         if len(system_prompt) > 500:
-            output_string += "```\n" + system_prompt[:500] + "...\n```"
+            output_string += (
+                "*System Prompt*:\n```\n" + system_prompt[:500] + "...\n```"
+            )
         else:
-            output_string += "```\n" + system_prompt + "\n```"
+            output_string += "*System Prompt*:\n```\n" + system_prompt + "\n```"
 
         await reply(message, output_string)
+
+    logger.info("Released lock for user: %s", identifier)
+
+
+async def show_creativity_menu(update: Update, context: CallbackContext) -> None:
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
+
+    # is_edit: bool = False
+    if message is None:
+        message = getattr(update, "edited_message", None)
+        if message is None:
+            raise ValueError("Message is None.")
+
+    output_string = "Click to select a level:\n"
+
+    keyboard = []
+    for level in ["zero", "low", "medium", "high", "extreme"]:
+        keyboard.append(
+            [
+                telegram.InlineKeyboardButton(
+                    level, callback_data=f"set_creativity|{level}"
+                )
+            ]
+        )
+
+    reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+    await message.reply_text(
+        output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+    )
+
+
+async def set_creativity_handler(update: Update, context: CallbackContext) -> None:
+    global db
+
+    callback_query = update.callback_query
+
+    if callback_query is None:
+        raise ValueError("Callback query is None.")
+
+    message = callback_query.message
+
+    if message is None:
+        raise ValueError("Message is None.")
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_user_lock(identifier)
+    if ulock.locked():
+        logger.info("Please wait for your previous request to finish.")
+        return
+
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        query = update.callback_query
+        await query.answer()
+
+        new_creativity = query.data.split("|")[1]
+        uprofile = db.get(identifier)
+        assert uprofile is not None
+
+        if new_creativity == "zero":
+            score = 0.0
+        elif new_creativity == "low":
+            score = 0.3
+        elif new_creativity == "medium":
+            score = 0.7
+        elif new_creativity == "high":
+            score = 1.0
+        elif new_creativity == "extreme":
+            score = 1.2
+        else:
+            raise ValueError("Invalid creativity level.")
+
+        uprofile["creativity"] = score
+        db.set(identifier, uprofile)
+
+        await context.bot.send_message(
+            chat_id=message.chat.id,
+            text=f"Creativity set to {new_creativity}.",
+            parse_mode=ParseMode.HTML,
+        )
 
     logger.info("Released lock for user: %s", identifier)
 
@@ -391,12 +490,13 @@ def escape_markdown(text) -> str:
 
 
 async def reply(message: telegram.Message, output_string: str) -> None:
-    if len(output_string) >= 4096:
+    MSG_MAX_LEN = 3800
+    if len(output_string) >= MSG_MAX_LEN:
         sections = re.split(r"\n{2,}", output_string)
         current_chunk = ""
         is_close: bool = True
         for section in sections:
-            if len(current_chunk) + len(section) + 2 <= 4096:
+            if len(current_chunk) + len(section) + 2 <= MSG_MAX_LEN:
                 current_chunk += section + "\n\n"
             else:
                 current_chunk = escape_markdown(current_chunk)
@@ -589,7 +689,9 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         model_name = uprofile["model_t2t"]
         character = uprofile["character"]
         system_prompt = CHARACTER[character]["system_prompt"]
-        llm = llm_factory.create_chat_llm(platform, model_name, system_prompt)
+        llm = llm_factory.create_chat_llm(
+            platform, model_name, system_prompt, uprofile["creativity"]
+        )
         # logger.info("System Prompt: %s", llm.system_prompt)
         responses = await call_llm(
             llm, prompt, recent_conversation, ResponseMode.DEFAULT, None
@@ -701,7 +803,7 @@ async def photo_handler(update: Update, context: CallbackContext):
         model_name = uprofile["model_i2t"]
         system_prompt = CHARACTER["seer"]["system_prompt"]
         image_interpreter = llm_factory.create_image_interpreter(
-            platform, model_name, system_prompt
+            platform, model_name, system_prompt, uprofile["creativity"]
         )
         responses = await call_ii(image_interpreter, prompt, None, filepath=export_path)
         response = responses[-1]
@@ -831,7 +933,7 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
         platform = uprofile["platform_t2t"]
         model_name = uprofile["model_t2t"]
         system_prompt = CHARACTER["general"]["system_prompt"]
-        llm = llm_factory.create_chat_llm(platform, model_name, system_prompt)
+        llm = llm_factory.create_chat_llm(platform, model_name, system_prompt, 0.0)
 
         responses = await call_llm(llm, prompt, context, ResponseMode.DEFAULT, None)
 
