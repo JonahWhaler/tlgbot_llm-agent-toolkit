@@ -484,12 +484,29 @@ def escape_markdown(text) -> str:
     for char in special_chars:
         _text = _text.replace(char, f"\\{char}")
 
-    _text = re.sub(r"#{1,} (.*?)\n", r"**\1**\n", _text)
+    _text = re.sub(r"#{1,} (.*?)\n", r"*\1*\n", _text)
+    _text = re.sub(r"#{2,}", "", _text)
     _text = _text.replace("#", r"\#")
+
+    logger.info("Raw Markdown: %s", text)
+    logger.info("Escaped Markdown: %s", _text)
+    return _text
+
+
+def escape_html(text) -> str:
+    """
+    Escape special characters for Telegram's HTMLV2.
+    """
+    _text = text[:]
+    _text = _text.replace("&", "&amp;")
+    _text = _text.replace("<", "&lt;")
+    _text = _text.replace(">", "&gt;")
     return _text
 
 
 async def reply(message: telegram.Message, output_string: str) -> None:
+    if config.DEBUG == "1":
+        logger.info(">> %s", output_string)
     MSG_MAX_LEN = 3800
     if len(output_string) >= MSG_MAX_LEN:
         sections = re.split(r"\n{2,}", output_string)
@@ -499,20 +516,51 @@ async def reply(message: telegram.Message, output_string: str) -> None:
             if len(current_chunk) + len(section) + 2 <= MSG_MAX_LEN:
                 current_chunk += section + "\n\n"
             else:
-                current_chunk = escape_markdown(current_chunk)
-                current_chunk, is_close = handle_triple_ticks(current_chunk, is_close)
-                _ = await message.reply_text(
-                    current_chunk, parse_mode=ParseMode.MARKDOWN_V2
+                formatted_chunk = escape_markdown(current_chunk)
+                formatted_chunk, is_close = handle_triple_ticks(
+                    formatted_chunk, is_close
                 )
+                try:
+                    await message.reply_text(
+                        output_string, parse_mode=ParseMode.MARKDOWN_V2
+                    )
+                except telegram.error.BadRequest as bre:
+                    logger.error(bre)
+                    if "Can't parse entities:" in str(bre):
+                        await message.reply_text(
+                            escape_html(current_chunk), parse_mode=ParseMode.HTML
+                        )
+                    else:
+                        raise
                 current_chunk = section + "\n\n"
         # Handle the last chunk
         if current_chunk:
-            current_chunk = escape_markdown(current_chunk)
-            current_chunk, _ = handle_triple_ticks(current_chunk, is_close)
-            await message.reply_text(current_chunk, parse_mode=ParseMode.MARKDOWN_V2)
+            formatted_chunk = escape_markdown(current_chunk)
+            formatted_chunk, _ = handle_triple_ticks(formatted_chunk, is_close)
+            try:
+                await message.reply_text(
+                    formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
+                )
+            except telegram.error.BadRequest as bre:
+                logger.error(bre)
+                if "Can't parse entities:" in str(bre):
+                    await message.reply_text(
+                        escape_html(current_chunk), parse_mode=ParseMode.HTML
+                    )
+                else:
+                    raise
     else:
-        output_string, _ = handle_triple_ticks(escape_markdown(output_string), True)
-        await message.reply_text(output_string, parse_mode=ParseMode.MARKDOWN_V2)
+        formatted_chunk, _ = handle_triple_ticks(escape_markdown(output_string), True)
+        try:
+            await message.reply_text(formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2)
+        except telegram.error.BadRequest as bre:
+            logger.error(bre)
+            if "Can't parse entities:" in str(bre):
+                await message.reply_text(
+                    escape_html(output_string), parse_mode=ParseMode.HTML
+                )
+            else:
+                raise
 
 
 async def middleware_function(update: Update, context: CallbackContext) -> None:
