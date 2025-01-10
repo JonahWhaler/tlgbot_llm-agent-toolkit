@@ -169,3 +169,13 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.vscode/
+
+# Sensitive configuration
+config/*.yaml
+
+# Production Data
+data/log/
+data/db/
+data/temp/*/

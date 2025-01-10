@@ -1,0 +1,25 @@
+services:
+  tlgbot:
+    container_name: tlg_bot
+    build: ./tlg_bot/
+    restart: always
+    stdin_open: true
+    tty: true
+    command: python3 code/main.py
+    env_file:
+      - ./.env
+    volumes:
+      - type: bind
+        source: ./config
+        target: /config
+      - type: bind
+        source: ./data/log
+        target: /log
+      - type: bind
+        source: ./data/db
+        target: /db
+      - type: bind
+        source: ./data/temp
+        target: /temp
+    extra_hosts:
+    - "host.docker.internal:192.168.0.55" # Replace "192.168.0.55" with your own local IP

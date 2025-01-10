@@ -1,0 +1,21 @@
+openai:
+  t2t:
+    - gpt-4o
+    - gpt-4o-mini
+    - o1-mini
+    # - o1-preview
+  i2t:
+    - gpt-4o
+    - gpt-4o-mini
+
+ollama:
+  t2t:
+    - qwen2.5:7b
+    - qwen2.5:14b
+    - dolphin3:latest
+  i2t:
+    - llava:7b
+
+deepseek:
+  t2t:
+    - deepseek-chat

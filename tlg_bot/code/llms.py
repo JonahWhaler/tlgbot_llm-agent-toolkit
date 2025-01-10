@@ -1,0 +1,117 @@
+import logging
+
+from pydantic import BaseModel
+
+from llm_agent_toolkit import Core, ChatCompletionConfig  # type: ignore
+from llm_agent_toolkit._core import ImageInterpreter
+from llm_agent_toolkit.core import local, open_ai, deep_seek  #  local aka Ollama
+
+from config import PARAMETER, PROVIDER, OLLAMA_HOST
+
+logger = logging.getLogger(__name__)
+
+
+class LLMFactory:
+
+    def __init__(self):
+        pass
+
+    def create_chat_llm(
+        self,
+        platform: str,
+        model_name: str,
+        system_prompt: str,
+    ) -> Core:
+        supported_providers = ["ollama", "openai", "deepseek"]
+        if platform not in supported_providers:
+            raise ValueError(
+                f"Invalid provider. Supported providers: {supported_providers}"
+            )
+
+        supported_models = PROVIDER[platform]["t2t"]
+        if model_name not in supported_models:
+            raise ValueError(f"Invalid model. Supported models: {supported_models}")
+
+        params = PARAMETER["chatcompletion"][platform]
+        config = ChatCompletionConfig(
+            name=model_name, return_n=1, max_iteration=1, **params
+        )
+
+        llm: Core | None
+        if platform == "ollama":
+            if local.OllamaCore.csv_path is None:
+                local.OllamaCore.load_csv("/config/ollama.csv")
+            llm = local.Text_to_Text(
+                connection_string=OLLAMA_HOST,
+                system_prompt=system_prompt,
+                config=config,
+            )
+        elif platform == "openai":
+            if open_ai.OpenAICore.csv_path is None:
+                open_ai.OpenAICore.load_csv("/config/openai.csv")
+            if config.name.startswith("o1"):
+                if config.temperature != 1.0:
+                    logger.warning("Force %s temperature to 1.0", config.name)
+                    config.temperature = 1.0
+                llm = open_ai.O1Beta_OAI_Core(system_prompt="", config=config)
+            else:
+                llm = open_ai.Text_to_Text(
+                    system_prompt=system_prompt, config=config, tools=None
+                )
+        else:  # platform == "deepseek":
+            llm = deep_seek.Text_to_Text(
+                system_prompt=system_prompt,
+                config=config,
+            )
+        return llm
+
+    def create_image_interpreter(
+        self,
+        platform: str,
+        model_name: str,
+        system_prompt: str,
+    ) -> ImageInterpreter:
+        supported_providers = ["ollama", "openai"]
+        if platform not in supported_providers:
+            raise ValueError(
+                f"Invalid provider. Supported providers: {supported_providers}"
+            )
+
+        supported_models = PROVIDER[platform]["i2t"]
+        if model_name not in supported_models:
+            raise ValueError(f"Invalid model. Supported models: {supported_models}")
+
+        params = PARAMETER["imageinterpretation"][platform]
+        config = ChatCompletionConfig(
+            name=model_name, return_n=1, max_iteration=1, **params
+        )
+        image_interpreter: ImageInterpreter | None
+        if platform == "ollama":
+            image_interpreter = local.Image_to_Text_SO(
+                connection_string=OLLAMA_HOST,
+                system_prompt=system_prompt,
+                config=config,
+            )
+        else:  # platform == "openai":
+            image_interpreter = open_ai.OAI_StructuredOutput_Core(
+                system_prompt=system_prompt, config=config
+            )
+        return image_interpreter
+
+
+class Step(BaseModel):
+    goal: str
+    task: str
+    output: str
+
+
+class LLMResponse(BaseModel):
+    prompt: str
+    steps: list[Step]
+    result: str
+
+
+class IIResponse(BaseModel):
+    long_description: str
+    summary: str
+    keywords: list[str]
