@@ -53,6 +53,9 @@ rate_limiter = grl(rl_storage, 1, 1, 100)
 user_stats: dict[str, bool] = {}
 
 llm_factory = LLMFactory()
+agent_zero = llm_factory.create_chat_llm(
+    "deepseek", "deepseek-chat", config.UserMetadataExtractor, 0.3
+)
 
 
 def register_user(identifier: str) -> None:
@@ -70,6 +73,7 @@ def register_user(identifier: str) -> None:
         "model_i2t": mi2t,
         "character": DEFAULT_CHARACTER,
         "creativity": 0.7,
+        "memory": None,
     }
     db.set(identifier, uprofile)
 
@@ -114,6 +118,8 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
         character_name = CHARACTER[character]["name"]
         system_prompt = CHARACTER[character]["system_prompt"]
         chatcompletion = uprofile["model_t2t"]
+        memory = uprofile["memory"]
+
         creativity = uprofile["creativity"]
 
         if creativity == 0.0:
@@ -134,6 +140,9 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
             )
         else:
             output_string += "*System Prompt*:\n```\n" + system_prompt + "\n```"
+
+        if memory:
+            output_string += "\n\n*Memory*:\n```\n" + memory + "\n```"
 
         await reply(message, output_string)
 
@@ -567,7 +576,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
     """
     Intercepts messages
     """
-    global chat_memory, rate_limiter
+    global chat_memory, rate_limiter, db
 
     logger.info("Middleware => Update: %s", update)
     message: Optional[telegram.Message] = getattr(update, "message", None)
@@ -599,6 +608,27 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         if message.text and umemory is not None:
             if not message.text.startswith("/"):
                 umemory.push({"role": "user", "content": message.text})
+                recent_interactions = umemory.last_n(config.MEMORY_LEN)
+                if len(recent_interactions) < 5:
+                    return
+
+                uprofile = db.get(identifier)
+                assert uprofile is not None
+                if uprofile["memory"] is not None:
+                    umetadata = uprofile["memory"]
+                    prompt = f"Update user's metadata. Existing metadata: \n{umetadata}"
+                else:
+                    umetadata = "None"
+                    prompt = "Construct user's metadata."
+                responses = await agent_zero.run_async(
+                    query=prompt, context=recent_interactions
+                )
+                response = responses[0]
+                new_user_metadata = response["content"]
+                uprofile["memory"] = new_user_metadata
+                db.set(identifier, uprofile)
+                logger.info("Old user's metadata: %s", umetadata)
+                logger.info("New user's metadata: %s", new_user_metadata)
 
 
 async def help_handler(update: Update, context: CallbackContext) -> None:
@@ -737,6 +767,10 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         model_name = uprofile["model_t2t"]
         character = uprofile["character"]
         system_prompt = CHARACTER[character]["system_prompt"]
+        umetadata = uprofile["memory"]
+        if umetadata:
+            system_prompt += f"<metadata>{umetadata}</metadata>"
+
         llm = llm_factory.create_chat_llm(
             platform, model_name, system_prompt, uprofile["creativity"]
         )

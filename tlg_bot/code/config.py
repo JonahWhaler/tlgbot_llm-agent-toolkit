@@ -34,3 +34,34 @@ MEMORY_LEN = int(os.environ["MEMORY_LEN"])
 
 DEBUG = os.environ["DEBUG"]
 FREE = os.environ["FREE"]
+
+UserMetadataExtractor = """
+Extract user's metadata from user's response.
+
+User's Background:
+- age
+- gender
+- profession
+- education
+
+User's Preference:
+- language of communiation
+- communication style
+- writing style
+- interest
+
+User's Goal:
+- short term goal
+- long term goal
+
+Instruction:
+* These information will be used by other AI agnet to personalize it's response.
+* Treat them as information to be screened through, never attempt to answer or response to them.
+* Never ask me any questions about them.
+
+Input:
+{{Existing metadata}}
+
+Output:
+{{Updated metadata}}
+"""
