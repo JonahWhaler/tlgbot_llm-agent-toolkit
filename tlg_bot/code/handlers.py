@@ -20,12 +20,10 @@ from pydantic import BaseModel
 from llm_agent_toolkit import ResponseMode  # type: ignore
 from llm_agent_toolkit._memory import ShortTermMemory  # type: ignore
 from llm_agent_toolkit._core import ImageInterpreter
+import chromadb
+from llm_agent_toolkit.memory import ChromaMemory
 
-from llms import (
-    LLMFactory,
-    # LLMResponse,
-    IIResponse,
-)
+from llms import LLMFactory, IIResponse
 from pygrl import BasicStorage, GeneralRateLimiter as grl
 
 from storage import SQLite3_Storage
@@ -40,6 +38,7 @@ from config import (
     PREMIUM_MEMBERS,
     FREE,
 )
+from util import ChromaDBFactory
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +53,14 @@ user_stats: dict[str, bool] = {}
 
 llm_factory = LLMFactory()
 agent_zero = llm_factory.create_chat_llm(
-    "deepseek", "deepseek-chat", config.UserMetadataExtractor, 0.3
+    "deepseek", "deepseek-chat", "extractor", 0.3, True
+)
+
+agent_router = llm_factory.create_chat_llm(
+    "deepseek", "deepseek-chat", "router", 0.3, True
+)
+main_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+    persist=True, persist_directory="/temp/vect"
 )
 
 
@@ -74,19 +80,64 @@ def register_user(identifier: str) -> None:
         "character": DEFAULT_CHARACTER,
         "creativity": 0.7,
         "memory": None,
+        "auto_routing": True,
     }
     db.set(identifier, uprofile)
 
     return
 
 
-def register_memory(identifier: str) -> None:
+def register_memory(identifier: str, force: bool = False) -> None:
     global chat_memory
 
     umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
-    if umemory is None:
-        umemory = ShortTermMemory(max_entry=MEMORY_LEN + 1)
-        chat_memory[identifier] = umemory
+    if umemory is None or force:
+        chat_memory[identifier] = ShortTermMemory(max_entry=MEMORY_LEN + 5)
+
+
+async def find_best_agent(prompt: str, context: list[dict] | None) -> str:
+    logger.info("Routing...")
+    global agent_router
+
+    # Input
+    agents = []
+    for character in CHARACTER.keys():
+        if CHARACTER[character]["io"] == "i2t":
+            continue
+
+        if CHARACTER[character]["access"] == "private":
+            continue
+
+        agent_object = {
+            "name": character,
+            "system_prompt": CHARACTER[character]["system_prompt"],
+        }
+        t = CHARACTER[character].get("tools", None)
+        # heavily rely on the tool name, no further description here.
+        if t:
+            agent_object["tools"] = t
+        agents.append(agent_object)
+
+    input_prompt = {"request": prompt, "agents": agents}
+    responses = await agent_router.run_async(
+        query=json.dumps(input_prompt), context=context, mode=ResponseMode.JSON
+    )
+
+    # Output
+    content = responses[0]["content"]
+    try:
+        output_object = json.loads(content)
+        best_agent = output_object.get("agent", DEFAULT_CHARACTER)
+
+        if best_agent not in CHARACTER.keys():
+            logger.warning("Attempted to use unknown agent: %s", best_agent)
+            logger.warning("Falling back to default agent.")
+            best_agent = DEFAULT_CHARACTER
+        reason = output_object.get("reason", "No reason provided.")
+        logger.info("Pick %s. Reason: %s", CHARACTER[best_agent], reason)
+        return best_agent
+    except json.JSONDecodeError:
+        return DEFAULT_CHARACTER
 
 
 async def show_character_handler(update: Update, context: CallbackContext) -> None:
@@ -254,9 +305,11 @@ async def show_character_menu(update: Update, context: CallbackContext) -> None:
         )
         return
 
-    characters = list(CHARACTER.keys())
-    if "seer" in characters:
-        characters.remove("seer")
+    characters = []
+    for character in CHARACTER.keys():
+        if CHARACTER[character]["access"] == "private":
+            continue
+        characters.append(character)
 
     output_string = "Click to select a character:\n"
 
@@ -325,7 +378,7 @@ async def set_character_handler(update: Update, context: CallbackContext) -> Non
 
         await context.bot.send_message(
             chat_id=message.chat.id,
-            text=f"Character set to {CHARACTER[new_character]['name']}",
+            text=f"{CHARACTER[new_character]['welcome_message']}",
             parse_mode=ParseMode.HTML,
         )
 
@@ -493,12 +546,12 @@ def escape_markdown(text) -> str:
     for char in special_chars:
         _text = _text.replace(char, f"\\{char}")
 
-    _text = re.sub(r"#{1,} (.*?)\n", r"*\1*\n", _text)
+    # _text = re.sub(r"#{1,} (.*?)\n", r"*\1*\n", _text)
     _text = re.sub(r"#{2,}", "", _text)
     _text = _text.replace("#", r"\#")
 
-    logger.info("Raw Markdown: %s", text)
-    logger.info("Escaped Markdown: %s", _text)
+    # logger.info("Raw Markdown: %s", text)
+    # logger.info("Escaped Markdown: %s", _text)
     return _text
 
 
@@ -572,11 +625,46 @@ async def reply(message: telegram.Message, output_string: str) -> None:
                 raise
 
 
+async def update_memory(identifier: str, new_content: str | None) -> str | None:
+    global agent_zero, chat_memory, db
+
+    umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
+    if new_content and umemory is not None:
+        if not new_content.startswith("/"):
+            umemory.push({"role": "user", "content": new_content})
+
+    uprofile = db.get(identifier)
+    if config.DEBUG == "1":
+        assert uprofile is not None
+
+    old_interactions = umemory.to_list()[: config.MEMORY_LEN]
+    if len(old_interactions) == 0:
+        return
+
+    selected_interactions = []
+    for interaction in old_interactions:
+        if interaction["role"] == "user":
+            selected_interactions.append(interaction)
+
+    context = selected_interactions if len(selected_interactions) > 0 else None
+    existing_memory = uprofile["memory"]
+    if existing_memory:
+        prompt = f"Update user's metadata. Existing metadata: \n{existing_memory}"
+    else:
+        prompt = "Construct user's metadata."
+
+    responses = await agent_zero.run_async(
+        query=prompt, context=context, mode=ResponseMode.JSON
+    )
+    uprofile["memory"] = responses[0]["content"]
+    db.set(identifier, uprofile)
+
+
 async def middleware_function(update: Update, context: CallbackContext) -> None:
     """
     Intercepts messages
     """
-    global chat_memory, rate_limiter, db
+    global chat_memory, rate_limiter, db, user_stats
 
     logger.info("Middleware => Update: %s", update)
     message: Optional[telegram.Message] = getattr(update, "message", None)
@@ -604,31 +692,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
 
         register_user(identifier)
         register_memory(identifier)
-        umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
-        if message.text and umemory is not None:
-            if not message.text.startswith("/"):
-                umemory.push({"role": "user", "content": message.text})
-                recent_interactions = umemory.last_n(config.MEMORY_LEN)
-                if len(recent_interactions) < 5:
-                    return
-
-                uprofile = db.get(identifier)
-                assert uprofile is not None
-                if uprofile["memory"] is not None:
-                    umetadata = uprofile["memory"]
-                    prompt = f"Update user's metadata. Existing metadata: \n{umetadata}"
-                else:
-                    umetadata = "None"
-                    prompt = "Construct user's metadata."
-                responses = await agent_zero.run_async(
-                    query=prompt, context=recent_interactions
-                )
-                response = responses[0]
-                new_user_metadata = response["content"]
-                uprofile["memory"] = new_user_metadata
-                db.set(identifier, uprofile)
-                logger.info("Old user's metadata: %s", umetadata)
-                logger.info("New user's metadata: %s", new_user_metadata)
+        await update_memory(identifier, message.text)
 
 
 async def help_handler(update: Update, context: CallbackContext) -> None:
@@ -678,11 +742,15 @@ async def call_llm(llm, prompt, context, mode, response_format) -> list[dict]:
             )
             return responses
         except ValueError as ve:
-            if str(ve) == "max_output_tokens <= 0":
+            if "max_output_tokens <= 0" in str(ve):
                 context = context[1:]
                 iteration += 1
             else:
+                logger.error("call_llm: ValueError: %s", ve)
                 raise
+        except Exception as e:
+            logger.error("call_llm: Exception: %s", e)
+            raise
     raise ValueError(f"max_output_tokens <= 0. Retry up to {MAX_RETRY} times.")
 
 
@@ -766,19 +834,35 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         platform = uprofile["platform_t2t"]
         model_name = uprofile["model_t2t"]
         character = uprofile["character"]
-        system_prompt = CHARACTER[character]["system_prompt"]
         umetadata = uprofile["memory"]
         if umetadata:
-            system_prompt += f"<metadata>{umetadata}</metadata>"
+            if recent_conversation:
+                recent_conversation.insert(
+                    0,
+                    {"role": "system", "content": f"<metadata>{umetadata}</metadata>"},
+                )
+
+        auto_routing = uprofile["auto_routing"]
+        if auto_routing:
+            if recent_conversation and len(recent_conversation) >= 3:
+                character = await find_best_agent(
+                    prompt, context=recent_conversation[-3:]
+                )
+            else:
+                character = await find_best_agent(prompt, context=None)
 
         llm = llm_factory.create_chat_llm(
-            platform, model_name, system_prompt, uprofile["creativity"]
+            platform, model_name, character, uprofile["creativity"]
         )
         # logger.info("System Prompt: %s", llm.system_prompt)
         responses = await call_llm(
             llm, prompt, recent_conversation, ResponseMode.DEFAULT, None
         )
-        response = responses[0]
+        logger.info("Generated %d responses.", len(responses))
+        for response in responses:
+            logger.info("\nResponse: %s", response["content"])
+
+        response = responses[-1]
         content = response["content"]
         # logger.info("Raw Response: %s", content)
 
@@ -799,7 +883,7 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         #         progress = f"[{idx}] Goal={step['goal']}\nTask={step['task']}\nOutput={step['output']}\n\n"
         #         logger.info(progress)
 
-        output_string = content
+        output_string = CHARACTER[character]["name"] + ":\n" + content
 
         if output_string is None or output_string == "":
             output_string = "Sorry."
@@ -823,7 +907,7 @@ def generate_unique_filename(seed: str, extension: str, deterministic: bool = Fa
 
 
 async def photo_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, db
+    global chat_memory, user_locks, db, user_stats
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
@@ -925,7 +1009,7 @@ async def photo_handler(update: Update, context: CallbackContext):
     logger.info("Released lock for user: %s", identifier)
 
 
-async def reset_memory_handler(update: Update, context: CallbackContext):
+async def reset_chatmemory_handler(update: Update, context: CallbackContext):
     global chat_memory, user_locks
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
@@ -955,6 +1039,35 @@ async def reset_memory_handler(update: Update, context: CallbackContext):
         umemory.clear()
         await message.reply_text("Memory has been reset.")
 
+    logger.info("Released lock for user: %s", identifier)
+
+
+async def reset_user_handler(update: Update, context: CallbackContext):
+    global user_locks
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
+
+    # is_edit: bool = False
+    if message is None:
+        message = getattr(update, "edited_message", None)
+        if message is None:
+            raise ValueError("Message is None.")
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_user_lock(identifier)
+    if ulock.locked():
+        logger.info("Please wait for your previous request to finish.")
+        return
+
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        register_memory(identifier, force=True)
+        register_user(identifier)
+        await message.reply_text("User has been reset.")
     logger.info("Released lock for user: %s", identifier)
 
 
@@ -1014,8 +1127,8 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
 
         platform = uprofile["platform_t2t"]
         model_name = uprofile["model_t2t"]
-        system_prompt = CHARACTER["general"]["system_prompt"]
-        llm = llm_factory.create_chat_llm(platform, model_name, system_prompt, 0.0)
+        # system_prompt = CHARACTER["general"]["system_prompt"]
+        llm = llm_factory.create_chat_llm(platform, model_name, "general", 0.0)
 
         responses = await call_llm(llm, prompt, context, ResponseMode.DEFAULT, None)
 

@@ -6,7 +6,9 @@ from llm_agent_toolkit import Core, ChatCompletionConfig  # type: ignore
 from llm_agent_toolkit._core import ImageInterpreter
 from llm_agent_toolkit.core import local, open_ai, deep_seek  #  local aka Ollama
 
-from config import PARAMETER, PROVIDER, OLLAMA_HOST
+from agent_tools import ToolFactory
+
+from config import PARAMETER, PROVIDER, OLLAMA_HOST, CHARACTER
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +19,12 @@ class LLMFactory:
         pass
 
     def create_chat_llm(
-        self, platform: str, model_name: str, system_prompt: str, temperature: float
+        self,
+        platform: str,
+        model_name: str,
+        character: str,
+        temperature: float,
+        structured_output: bool = False,
     ) -> Core:
         supported_providers = ["ollama", "openai", "deepseek"]
         if platform not in supported_providers:
@@ -33,18 +40,42 @@ class LLMFactory:
         params["temperature"] = temperature
         logger.info("Creating chat LLM: %s", params)
         config = ChatCompletionConfig(
-            name=model_name, return_n=1, max_iteration=1, **params
+            name=model_name,
+            return_n=1,
+            max_iteration=1 if structured_output else 5,
+            **params,
         )
+
+        system_prompt = CHARACTER[character]["system_prompt"]
+
+        tools = CHARACTER[character].get("tools", None)
+        tool_list: list | None = None
+        if tools:
+            tool_list = []
+            for t in tools:
+                tool = ToolFactory().get(tool_name=t)
+                if tool is None:
+                    raise ValueError(f"Requested tool not found. {t}")
+                tool_list.append(tool)
 
         llm: Core | None
         if platform == "ollama":
             if local.OllamaCore.csv_path is None:
                 local.OllamaCore.load_csv("/config/ollama.csv")
-            llm = local.Text_to_Text(
-                connection_string=OLLAMA_HOST,
-                system_prompt=system_prompt,
-                config=config,
-            )
+
+            if structured_output:
+                llm = local.Text_to_Text_SO(
+                    connection_string=OLLAMA_HOST,
+                    system_prompt=system_prompt,
+                    config=config,
+                )
+            else:
+                llm = local.Text_to_Text(
+                    connection_string=OLLAMA_HOST,
+                    system_prompt=system_prompt,
+                    config=config,
+                    tools=tool_list,
+                )
         elif platform == "openai":
             if open_ai.OpenAICore.csv_path is None:
                 open_ai.OpenAICore.load_csv("/config/openai.csv")
@@ -54,14 +85,23 @@ class LLMFactory:
                     config.temperature = 1.0
                 llm = open_ai.O1Beta_OAI_Core(system_prompt="", config=config)
             else:
-                llm = open_ai.Text_to_Text(
-                    system_prompt=system_prompt, config=config, tools=None
-                )
+                if structured_output:
+                    llm = open_ai.OAI_StructuredOutput_Core(
+                        system_prompt=system_prompt, config=config
+                    )
+                else:
+                    llm = open_ai.Text_to_Text(
+                        system_prompt=system_prompt, config=config, tools=tool_list
+                    )
         else:  # platform == "deepseek":
-            llm = deep_seek.Text_to_Text(
-                system_prompt=system_prompt,
-                config=config,
-            )
+            if structured_output:
+                llm = deep_seek.Text_to_Text_SO(
+                    system_prompt=system_prompt, config=config
+                )
+            else:
+                llm = deep_seek.Text_to_Text(
+                    system_prompt=system_prompt, config=config, tools=tool_list
+                )
         return llm
 
     def create_image_interpreter(

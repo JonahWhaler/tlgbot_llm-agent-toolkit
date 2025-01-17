@@ -20,14 +20,12 @@ import handlers
 import config
 
 logging.basicConfig(
-    filename="/log/ost.log",
+    filename="/log/tlg_bot.log",
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%d-%b-%y %H:%M:%S",
 )
-# logging.getLogger("httpx").setLevel(logging.CRITICAL)
-
-logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARN)
 
 
 def run_bot(bot: Application) -> None:
@@ -38,7 +36,8 @@ def run_bot(bot: Application) -> None:
     # bot.add_handler(CommandHandler("export", handlers.export_handler, filters=allowed_list), group=1)
     bot.add_handler(CommandHandler("help", handlers.help_handler), group=1)
     bot.add_handler(CommandHandler("start", handlers.start_handler), group=1)
-    bot.add_handler(CommandHandler("reset", handlers.reset_memory_handler), group=1)
+    bot.add_handler(CommandHandler("new", handlers.reset_chatmemory_handler), group=1)
+    bot.add_handler(CommandHandler("clear", handlers.reset_user_handler), group=1)
     bot.add_handler(
         CommandHandler("compress", handlers.compress_memory_handler), group=1
     )
@@ -111,7 +110,7 @@ async def post_init(app: Application) -> None:
     cmds = [
         ("/start", "Start Message"),
         ("/compress", "Compress Memory"),
-        ("/reset", "Reset Memory"),
+        ("/new", "Start a new chat"),
         ("/mycharacter", "Show My Character"),
         ("/characters", "Show Character Menu"),
         ("/models", "Show Model Menu"),
@@ -138,6 +137,8 @@ def update_timeout(
 
 
 if __name__ == "__main__":
+    logger = logging.getLogger(__name__)
+
     connect_timeout, pool_timeout = 5.0, 1.0
     read_timeout, write_timeout, media_write_timeout = 5.0, 5.0, 20.0
     timeout_factor = 1.2
@@ -152,6 +153,7 @@ if __name__ == "__main__":
         max_retry = int(max_retry)
 
     while True:
+        logging.warning(">>")
         try:
             aio_rate_limiter = AIORateLimiter(
                 overall_max_rate=10, overall_time_period=1, max_retries=max_retry

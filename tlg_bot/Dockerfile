@@ -18,7 +18,7 @@ ADD ./requirements.txt ./
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-RUN mkdir -p /code /config /db /log /temp
+RUN mkdir -p /code /config /db /log /temp /assets
 
 ADD . /code
 

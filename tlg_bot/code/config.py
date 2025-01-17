@@ -5,7 +5,7 @@ import yaml
 with open("/config/provider.yaml", "r", encoding="utf-8") as model_file:
     PROVIDER: dict[str, dict] = yaml.safe_load(model_file)
 
-DEFAULT_T2T_MODEL = ("deepseek", "deepseek-chat")
+DEFAULT_T2T_MODEL = ("openai", "gpt-4o-mini")
 DEFAULT_I2T_MODEL = ("ollama", "llava:7b")
 
 with open("/config/parameter.yaml", "r", encoding="utf-8") as parameter_file:
@@ -35,33 +35,53 @@ MEMORY_LEN = int(os.environ["MEMORY_LEN"])
 DEBUG = os.environ["DEBUG"]
 FREE = os.environ["FREE"]
 
-UserMetadataExtractor = """
-Extract user's metadata from user's response.
+# UserMetadataExtractor = """
+# Extract user's metadata from user's response.
 
-User's Background:
-- age
-- gender
-- profession
-- education
+# Instruction:
+# * These information will be used by other AI agnet to personalize it's response.
+# * Treat them as information to be screened through, never attempt to answer or response to them.
+# * Never ask me any questions about them.
+# * Response strictly in JSON format.
 
-User's Preference:
-- language of communiation
-- communication style
-- writing style
-- interest
+# JSON Output:
+# {
+#     \"background\": {
+#         \"age\": {{Age}},
+#         \"gender\": {{Gender}},
+#         \"profession\": {{Profession}},
+#         \"education\": {{Education}}
+#     },
+#     \"preference\": {
+#         \"language\": {{Language}},
+#         \"communication_style\": {{Communication style}},
+#         \"writing_style\": {{Writing style}},
+#         \"interest\": {{Interest}}
+#     },
+#     \"goal\": {
+#         \"short_term\": {{Short term goal}},
+#         \"long_term\": {{Long term goal}}
+#     }
+# }
+# """
 
-User's Goal:
-- short term goal
-- long term goal
+# AgentRouter = """
+# Pick an AI agent to handle user's request.
 
-Instruction:
-* These information will be used by other AI agnet to personalize it's response.
-* Treat them as information to be screened through, never attempt to answer or response to them.
-* Never ask me any questions about them.
+# JSON Input:
+# {
+#     \"request\": {{User's request}},
+#     \"agents\": [
+#         {
+#             \"name\": {{Agent name}},
+#             \"system_prompt\": {{Agent system prompt}},
+#         }
+#     ]
+# }
 
-Input:
-{{Existing metadata}}
-
-Output:
-{{Updated metadata}}
-"""
+# JSON Output:
+# {
+#     \"reason\": {{Reason}},
+#     \"agent\": {{Agent name}}
+# }
+# """
