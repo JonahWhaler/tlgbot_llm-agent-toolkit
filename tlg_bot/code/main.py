@@ -109,10 +109,11 @@ def update_delay(d: float, mf: float = 1.2, _max: float = 60.0) -> float:
 async def post_init(app: Application) -> None:
     cmds = [
         ("/start", "Start Message"),
-        ("/compress", "Compress Memory"),
+        # ("/compress", "Compress Memory"),
         ("/new", "Start a new chat"),
+        ("/clear", "Clear Memory"),
         ("/mycharacter", "Show My Character"),
-        ("/characters", "Show Character Menu"),
+        # ("/characters", "Show Character Menu"),
         ("/models", "Show Model Menu"),
         ("/help", "Help Message"),
     ]
