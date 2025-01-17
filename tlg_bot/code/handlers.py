@@ -89,9 +89,6 @@ def register_memory(identifier: str, force: bool = False) -> None:
 async def show_character_handler(update: Update, context: CallbackContext) -> None:
     global db
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -148,9 +145,6 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
 
 async def show_creativity_menu(update: Update, context: CallbackContext) -> None:
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -232,9 +226,6 @@ async def set_creativity_handler(update: Update, context: CallbackContext) -> No
 
 async def show_character_menu(update: Update, context: CallbackContext) -> None:
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -333,9 +324,6 @@ async def set_character_handler(update: Update, context: CallbackContext) -> Non
 
 async def show_model_menu(update: Update, context: CallbackContext) -> None:
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -522,9 +510,6 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
     if config.DEBUG == "1":
         logger.info("Middleware => Update: %s", update)
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -634,9 +619,6 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
     global chat_memory, user_locks, db, user_stats, agent_router
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -702,7 +684,6 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         llm = llm_factory.create_chat_llm(
             platform, model_name, character, uprofile["creativity"]
         )
-        # logger.info("System Prompt: %s", llm.system_prompt)
         responses = await call_llm(
             llm, prompt, recent_conversation, ResponseMode.DEFAULT, None
         )
@@ -742,9 +723,6 @@ async def photo_handler(update: Update, context: CallbackContext):
     global chat_memory, user_locks, db, user_stats
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -793,7 +771,6 @@ async def photo_handler(update: Update, context: CallbackContext):
 
         umemory.push({"role": "user", "content": prompt})
 
-        # recent_conversation = umemory.last_n(n=MEMORY_LEN)
         uprofile = db.get(identifier)
         assert uprofile is not None
 
@@ -845,9 +822,6 @@ async def reset_chatmemory_handler(update: Update, context: CallbackContext):
     global chat_memory, user_locks
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -878,9 +852,6 @@ async def reset_user_handler(update: Update, context: CallbackContext):
     global user_locks
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
-
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -959,7 +930,6 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
 
         platform = uprofile["platform_t2t"]
         model_name = uprofile["model_t2t"]
-        # system_prompt = CHARACTER["general"]["system_prompt"]
         llm = llm_factory.create_chat_llm(platform, model_name, "general", 0.0)
 
         responses = await call_llm(llm, prompt, context, ResponseMode.DEFAULT, None)
@@ -970,12 +940,8 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
         if content is None or content == "":
             raise ValueError("Content is None or empty.")
 
-        # logger.info("Compressed: %s", content)
-        # _ = json.loads(content)
-
         umemory.clear()
         umemory.push({"role": "assistant", "content": content})
-        # chat_memory[identifier] = umemory
 
         await message.reply_text("Memory has been compressed.")
 
