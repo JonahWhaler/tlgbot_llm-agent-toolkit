@@ -55,27 +55,25 @@ agent_router = llm_factory.create_chat_llm(
 )
 
 
-def register_user(identifier: str) -> None:
+def register_user(identifier: str, force: bool = False) -> None:
     global db
     uprofile = db.get(identifier)
-    if uprofile:
-        return
-
-    pt2t, mt2t = config.DEFAULT_T2T_MODEL
-    pi2t, mi2t = config.DEFAULT_I2T_MODEL
-    uprofile = {
-        "platform_t2t": pt2t,
-        "model_t2t": mt2t,
-        "platform_i2t": pi2t,
-        "model_i2t": mi2t,
-        "character": config.DEFAULT_CHARACTER,
-        "creativity": 0.7,
-        "memory": None,
-        "auto_routing": True,
-    }
-    db.set(identifier, uprofile)
-
-    return
+    if uprofile is None or force:
+        pt2t, mt2t = config.DEFAULT_T2T_MODEL
+        pi2t, mi2t = config.DEFAULT_I2T_MODEL
+        db.set(
+            identifier,
+            {
+                "platform_t2t": pt2t,
+                "model_t2t": mt2t,
+                "platform_i2t": pi2t,
+                "model_i2t": mi2t,
+                "character": config.DEFAULT_CHARACTER,
+                "creativity": 0.7,
+                "memory": None,
+                "auto_routing": True,
+            },
+        )
 
 
 def register_memory(identifier: str, force: bool = False) -> None:
@@ -869,7 +867,7 @@ async def reset_user_handler(update: Update, context: CallbackContext):
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
         register_memory(identifier, force=True)
-        register_user(identifier)
+        register_user(identifier, force=True)
         await message.reply_text("User has been reset.")
     logger.info("Released lock for user: %s", identifier)
 
