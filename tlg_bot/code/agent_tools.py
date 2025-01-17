@@ -19,7 +19,6 @@ from llm_agent_toolkit import (
 )
 from llm_agent_toolkit.tool import LazyTool
 from llm_agent_toolkit.memory import ChromaMemory
-from util import ChromaDBFactory
 import config
 
 logger = logging.getLogger(__name__)
@@ -181,11 +180,8 @@ def current_datetime(timezone: str = "Asia/Kuala_Lumpur"):
 
 
 class KnowledgeBaseQueryTool(Tool):
-    def __init__(self, title: str, directory: str):
+    def __init__(self, vdb: chromadb.ClientAPI, title: str):
         Tool.__init__(self, KnowledgeBaseQueryTool.function_info(title), False)
-        vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
-            persist=True, persist_directory=directory
-        )
         try:
             c = vdb.get_collection(name=title)
             logger.info("Count: %d", c.count())
@@ -274,8 +270,8 @@ class KnowledgeBaseQueryTool(Tool):
 
 
 class ToolFactory:
-    def __init__(self):
-        pass
+    def __init__(self, vdb: chromadb.ClientAPI):
+        self.vdb = vdb
 
     def get(self, tool_name: str) -> Tool | None:
         if tool_name == "current_datetime":
@@ -284,7 +280,7 @@ class ToolFactory:
             return DuckDuckGoSearchTool()
         if tool_name == "knowledge_base_query:tzuchi":
             logger.info("Initializing KnowledgeBaseQueryTool...")
-            _tool = KnowledgeBaseQueryTool(title="tzuchi", directory="/temp/vect")
+            _tool = KnowledgeBaseQueryTool(vdb=self.vdb, title="tzuchi")
             logger.info("KnowledgeBaseQueryTool initialized.")
             return _tool
         return None

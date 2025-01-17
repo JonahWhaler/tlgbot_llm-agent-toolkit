@@ -11,56 +11,47 @@ from typing import Optional
 from hashlib import md5
 from datetime import datetime
 
+# External Imports
 import telegram
 from telegram import Update
 from telegram.ext import CallbackContext
 from telegram.constants import ParseMode
 from pydantic import BaseModel
 
-from llm_agent_toolkit import ResponseMode  # type: ignore
-from llm_agent_toolkit._memory import ShortTermMemory  # type: ignore
+from llm_agent_toolkit import ResponseMode, ShortTermMemory  # type: ignore
 from llm_agent_toolkit._core import ImageInterpreter
 import chromadb
-from llm_agent_toolkit.memory import ChromaMemory
 
 from llms import LLMFactory, IIResponse
 from pygrl import BasicStorage, GeneralRateLimiter as grl
 
-from storage import SQLite3_Storage
+# Internal Imports
+import storage
+import custom_library
+import custom_workflow
 import config
-from config import (
-    DEFAULT_T2T_MODEL,
-    DEFAULT_I2T_MODEL,
-    CHARACTER,
-    DEFAULT_CHARACTER,
-    PROVIDER,
-    MEMORY_LEN,
-    PREMIUM_MEMBERS,
-    FREE,
-)
-from util import ChromaDBFactory
+
 
 logger = logging.getLogger(__name__)
 
 # Global Variables
 chat_memory: dict[str, ShortTermMemory] = {}
 user_locks: dict[str, Lock] = {}
-db = SQLite3_Storage("/db/ost.db", "user_profile", False)
+db = storage.SQLite3_Storage("/db/ost.db", "user_profile", False)
 
 rl_storage = BasicStorage()
 rate_limiter = grl(rl_storage, 1, 1, 100)
 user_stats: dict[str, bool] = {}
 
-llm_factory = LLMFactory()
+main_vdb: chromadb.ClientAPI = custom_library.ChromaDBFactory.get_instance(
+    persist=True, persist_directory="/temp/vect"
+)
+llm_factory = LLMFactory(vdb=main_vdb)
 agent_zero = llm_factory.create_chat_llm(
     "deepseek", "deepseek-chat", "extractor", 0.3, True
 )
-
 agent_router = llm_factory.create_chat_llm(
     "deepseek", "deepseek-chat", "router", 0.3, True
-)
-main_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
-    persist=True, persist_directory="/temp/vect"
 )
 
 
@@ -70,14 +61,14 @@ def register_user(identifier: str) -> None:
     if uprofile:
         return
 
-    pt2t, mt2t = DEFAULT_T2T_MODEL
-    pi2t, mi2t = DEFAULT_I2T_MODEL
+    pt2t, mt2t = config.DEFAULT_T2T_MODEL
+    pi2t, mi2t = config.DEFAULT_I2T_MODEL
     uprofile = {
         "platform_t2t": pt2t,
         "model_t2t": mt2t,
         "platform_i2t": pi2t,
         "model_i2t": mi2t,
-        "character": DEFAULT_CHARACTER,
+        "character": config.DEFAULT_CHARACTER,
         "creativity": 0.7,
         "memory": None,
         "auto_routing": True,
@@ -92,52 +83,7 @@ def register_memory(identifier: str, force: bool = False) -> None:
 
     umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
     if umemory is None or force:
-        chat_memory[identifier] = ShortTermMemory(max_entry=MEMORY_LEN + 5)
-
-
-async def find_best_agent(prompt: str, context: list[dict] | None) -> str:
-    logger.info("Routing...")
-    global agent_router
-
-    # Input
-    agents = []
-    for character in CHARACTER.keys():
-        if CHARACTER[character]["io"] == "i2t":
-            continue
-
-        if CHARACTER[character]["access"] == "private":
-            continue
-
-        agent_object = {
-            "name": character,
-            "system_prompt": CHARACTER[character]["system_prompt"],
-        }
-        t = CHARACTER[character].get("tools", None)
-        # heavily rely on the tool name, no further description here.
-        if t:
-            agent_object["tools"] = t
-        agents.append(agent_object)
-
-    input_prompt = {"request": prompt, "agents": agents}
-    responses = await agent_router.run_async(
-        query=json.dumps(input_prompt), context=context, mode=ResponseMode.JSON
-    )
-
-    # Output
-    content = responses[0]["content"]
-    try:
-        output_object = json.loads(content)
-        best_agent = output_object.get("agent", DEFAULT_CHARACTER)
-
-        if best_agent not in CHARACTER.keys():
-            logger.warning("Attempted to use unknown agent: %s", best_agent)
-            logger.warning("Falling back to default agent.")
-            best_agent = DEFAULT_CHARACTER
-        reason = output_object.get("reason", "No reason provided.")
-        logger.info("Pick %s. Reason: %s", CHARACTER[best_agent], reason)
-        return best_agent
-    except json.JSONDecodeError:
-        return DEFAULT_CHARACTER
+        chat_memory[identifier] = ShortTermMemory(max_entry=config.MEMORY_LEN + 5)
 
 
 async def show_character_handler(update: Update, context: CallbackContext) -> None:
@@ -166,8 +112,8 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
         assert uprofile is not None
 
         character = uprofile["character"]
-        character_name = CHARACTER[character]["name"]
-        system_prompt = CHARACTER[character]["system_prompt"]
+        character_name = config.CHARACTER[character]["name"]
+        system_prompt = config.CHARACTER[character]["system_prompt"]
         chatcompletion = uprofile["model_t2t"]
         memory = uprofile["memory"]
 
@@ -294,7 +240,7 @@ async def show_character_menu(update: Update, context: CallbackContext) -> None:
         if message is None:
             raise ValueError("Message is None.")
 
-    if message.from_user.id not in PREMIUM_MEMBERS and FREE == "0":
+    if message.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
         logger.warning(
             "User (%d |%s) is not a premium member",
             message.from_user.id,
@@ -306,8 +252,8 @@ async def show_character_menu(update: Update, context: CallbackContext) -> None:
         return
 
     characters = []
-    for character in CHARACTER.keys():
-        if CHARACTER[character]["access"] == "private":
+    for character in config.CHARACTER.keys():
+        if config.CHARACTER[character]["access"] == "private":
             continue
         characters.append(character)
 
@@ -315,7 +261,7 @@ async def show_character_menu(update: Update, context: CallbackContext) -> None:
 
     keyboard = []
     for character in characters:
-        name = CHARACTER[character]["name"]
+        name = config.CHARACTER[character]["name"]
         keyboard.append(
             [
                 telegram.InlineKeyboardButton(
@@ -343,7 +289,7 @@ async def set_character_handler(update: Update, context: CallbackContext) -> Non
     if message is None:
         raise ValueError("Message is None.")
 
-    if callback_query.from_user.id not in PREMIUM_MEMBERS and FREE == "0":
+    if callback_query.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
         logger.warning(
             "User (%d | %s) is not a premium member.",
             callback_query.from_user.id,
@@ -378,7 +324,7 @@ async def set_character_handler(update: Update, context: CallbackContext) -> Non
 
         await context.bot.send_message(
             chat_id=message.chat.id,
-            text=f"{CHARACTER[new_character]['welcome_message']}",
+            text=f"{config.CHARACTER[new_character]['welcome_message']}",
             parse_mode=ParseMode.HTML,
         )
 
@@ -395,7 +341,7 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
         if message is None:
             raise ValueError("Message is None.")
 
-    if message.from_user.id not in PREMIUM_MEMBERS and FREE == "0":
+    if message.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
         logger.warning(
             "User (%d |%s) is not a premium member",
             message.from_user.id,
@@ -409,9 +355,9 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
     output_string = "Click to select a model:\n"
 
     keyboard = []
-    providers = list(PROVIDER.keys())
+    providers = list(config.PROVIDER.keys())
     for provider in providers:
-        models = list(PROVIDER[provider]["t2t"])
+        models = list(config.PROVIDER[provider]["t2t"])
         for model_name in models:
             name = f"{provider} - {model_name}"
             keyboard.append(
@@ -441,7 +387,7 @@ async def set_model_handler(update: Update, context: CallbackContext) -> None:
     if message is None:
         raise ValueError("Message is None.")
 
-    if callback_query.from_user.id not in PREMIUM_MEMBERS and FREE == "0":
+    if callback_query.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
         logger.warning(
             "User (%d | %s) is not a premium member.",
             callback_query.from_user.id,
@@ -502,70 +448,6 @@ def get_user_lock(identifier: str) -> Lock:
     return user_locks[identifier]
 
 
-def handle_triple_ticks(text: str, closed: bool):
-    TRIPLE_TICKS = "```"
-    t = text[:]
-    if not closed:
-        t = TRIPLE_TICKS + t
-    close = len(re.findall(TRIPLE_TICKS, t)) % 2 == 0
-    if not close:
-        t += TRIPLE_TICKS
-    return t, close
-
-
-def escape_markdown(text) -> str:
-    """
-    Escape special characters for Telegram's HTMLV2.
-    """
-    # Characters that need to be escaped
-    special_chars = [
-        "_",
-        # "*",
-        "[",
-        "]",
-        "(",
-        ")",
-        # "~",
-        # "`",
-        ">",
-        # "#",
-        "+",
-        "-",
-        "=",
-        "|",
-        "{",
-        "}",
-        ".",
-        "!",
-    ]
-
-    # Escape backslash first to avoid double escaping
-    # text = text.replace("\\", "\\\\")
-    _text = text[:]
-    # # Escape special characters
-    for char in special_chars:
-        _text = _text.replace(char, f"\\{char}")
-
-    # _text = re.sub(r"#{1,} (.*?)\n", r"*\1*\n", _text)
-    _text = re.sub(r"#{2,}", "", _text)
-    _text = _text.replace("#", r"\#")
-
-    # logger.info("Raw Markdown: %s", text)
-    # logger.info("Escaped Markdown: %s", _text)
-    return _text
-
-
-def escape_html(text) -> str:
-    """
-    Escape special characters for Telegram's HTMLV2.
-    """
-    _text = text[:]
-    _text = _text.replace("&", "&amp;")
-    _text = _text.replace("<", "&lt;")
-    _text = _text.replace(">", "&gt;")
-    return _text
-
-
 async def reply(message: telegram.Message, output_string: str) -> None:
     if config.DEBUG == "1":
         logger.info(">> %s", output_string)
@@ -578,8 +460,8 @@ async def reply(message: telegram.Message, output_string: str) -> None:
             if len(current_chunk) + len(section) + 2 <= MSG_MAX_LEN:
                 current_chunk += section + "\n\n"
             else:
-                formatted_chunk = escape_markdown(current_chunk)
-                formatted_chunk, is_close = handle_triple_ticks(
+                formatted_chunk = custom_library.escape_markdown(current_chunk)
+                formatted_chunk, is_close = custom_library.handle_triple_ticks(
                     formatted_chunk, is_close
                 )
                 try:
@@ -590,15 +472,18 @@ async def reply(message: telegram.Message, output_string: str) -> None:
                     logger.error(bre)
                     if "Can't parse entities:" in str(bre):
                         await message.reply_text(
-                            escape_html(current_chunk), parse_mode=ParseMode.HTML
+                            custom_library.escape_html(current_chunk),
+                            parse_mode=ParseMode.HTML,
                         )
                     else:
                         raise
                 current_chunk = section + "\n\n"
         # Handle the last chunk
         if current_chunk:
-            formatted_chunk = escape_markdown(current_chunk)
-            formatted_chunk, _ = handle_triple_ticks(formatted_chunk, is_close)
+            formatted_chunk = custom_library.escape_markdown(current_chunk)
+            formatted_chunk, _ = custom_library.handle_triple_ticks(
+                formatted_chunk, is_close
+            )
             try:
                 await message.reply_text(
                     formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
@@ -607,66 +492,35 @@ async def reply(message: telegram.Message, output_string: str) -> None:
                 logger.error(bre)
                 if "Can't parse entities:" in str(bre):
                     await message.reply_text(
-                        escape_html(current_chunk), parse_mode=ParseMode.HTML
+                        custom_library.escape_html(current_chunk),
+                        parse_mode=ParseMode.HTML,
                     )
                 else:
                     raise
     else:
-        formatted_chunk, _ = handle_triple_ticks(escape_markdown(output_string), True)
+        formatted_chunk, _ = custom_library.handle_triple_ticks(
+            custom_library.escape_markdown(output_string), True
+        )
         try:
             await message.reply_text(formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2)
         except telegram.error.BadRequest as bre:
             logger.error(bre)
             if "Can't parse entities:" in str(bre):
                 await message.reply_text(
-                    escape_html(output_string), parse_mode=ParseMode.HTML
+                    custom_library.escape_html(output_string), parse_mode=ParseMode.HTML
                 )
             else:
                 raise
-
-
-async def update_memory(identifier: str, new_content: str | None) -> str | None:
-    global agent_zero, chat_memory, db
-
-    umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
-    if new_content and umemory is not None:
-        if not new_content.startswith("/"):
-            umemory.push({"role": "user", "content": new_content})
-
-    uprofile = db.get(identifier)
-    if config.DEBUG == "1":
-        assert uprofile is not None
-
-    old_interactions = umemory.to_list()[: config.MEMORY_LEN]
-    if len(old_interactions) == 0:
-        return
-
-    selected_interactions = []
-    for interaction in old_interactions:
-        if interaction["role"] == "user":
-            selected_interactions.append(interaction)
-
-    context = selected_interactions if len(selected_interactions) > 0 else None
-    existing_memory = uprofile["memory"]
-    if existing_memory:
-        prompt = f"Update user's metadata. Existing metadata: \n{existing_memory}"
-    else:
-        prompt = "Construct user's metadata."
-
-    responses = await agent_zero.run_async(
-        query=prompt, context=context, mode=ResponseMode.JSON
-    )
-    uprofile["memory"] = responses[0]["content"]
-    db.set(identifier, uprofile)
 
 
 async def middleware_function(update: Update, context: CallbackContext) -> None:
     """
     Intercepts messages
     """
-    global chat_memory, rate_limiter, db, user_stats
+    global chat_memory, rate_limiter, db, user_stats, agent_zero
 
-    logger.info("Middleware => Update: %s", update)
+    if config.DEBUG == "1":
+        logger.info("Middleware => Update: %s", update)
     message: Optional[telegram.Message] = getattr(update, "message", None)
     # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
 
@@ -692,16 +546,16 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
 
         register_user(identifier)
         register_memory(identifier)
-        await update_memory(identifier, message.text)
+        await custom_workflow.update_memory(
+            agent_zero, chat_memory, db, identifier, message.text
+        )
 
 
 async def help_handler(update: Update, context: CallbackContext) -> None:
     repo_path: str = config.REPO_PATH
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
 
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -714,9 +568,7 @@ async def start_handler(update: Update, context: CallbackContext) -> None:
     repo_path: str = config.REPO_PATH
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
-    # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
 
-    # is_edit: bool = False
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
@@ -779,7 +631,7 @@ async def call_ii(
 
 
 async def message_handler(update: Update, context: CallbackContext) -> None:
-    global chat_memory, user_locks, db, user_stats
+    global chat_memory, user_locks, db, user_stats, agent_router
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
@@ -815,13 +667,7 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         if umemory is None:
             raise ValueError("Memory is None.")
 
-        recent_conversation = umemory.last_n(n=MEMORY_LEN)
-
-        # flist = umemory.to_list()
-        # for m in flist:
-        #     logger.info("Memory: %s", m)
-
-        # logger.info("Recent: %s", recent_conversation)
+        recent_conversation = umemory.last_n(n=config.MEMORY_LEN)
 
         if len(recent_conversation) > 1:
             recent_conversation = recent_conversation[:-1]  # The last one is the prompt
@@ -845,11 +691,13 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         auto_routing = uprofile["auto_routing"]
         if auto_routing:
             if recent_conversation and len(recent_conversation) >= 3:
-                character = await find_best_agent(
-                    prompt, context=recent_conversation[-3:]
+                character = await custom_workflow.find_best_agent(
+                    agent_router, prompt, context=recent_conversation[-3:]
                 )
             else:
-                character = await find_best_agent(prompt, context=None)
+                character = await custom_workflow.find_best_agent(
+                    agent_router, prompt, context=None
+                )
 
         llm = llm_factory.create_chat_llm(
             platform, model_name, character, uprofile["creativity"]
@@ -864,26 +712,10 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
 
         response = responses[-1]
         content = response["content"]
-        # logger.info("Raw Response: %s", content)
-
-        # jresult = json.loads(content)
-        # if "result" not in jresult:
-        #     output_string = "Sorry. Please try again."
-        #     await reply(message, output_string)
-        #     return
-
-        # for key in jresult.keys():
-        #     logger.info("%s: %s", key, jresult[key])
 
         umemory.push({"role": "assistant", "content": content})
 
-        # if CONFIG.DEBUG == "1":
-        #     # View how the llm handle user's prompt
-        #     for idx, step in enumerate(jresult["steps"], start=1):
-        #         progress = f"[{idx}] Goal={step['goal']}\nTask={step['task']}\nOutput={step['output']}\n\n"
-        #         logger.info(progress)
-
-        output_string = CHARACTER[character]["name"] + ":\n" + content
+        output_string = config.CHARACTER[character]["name"] + ":\n" + content
 
         if output_string is None or output_string == "":
             output_string = "Sorry."
@@ -967,7 +799,7 @@ async def photo_handler(update: Update, context: CallbackContext):
 
         platform = uprofile["platform_i2t"]
         model_name = uprofile["model_i2t"]
-        system_prompt = CHARACTER["seer"]["system_prompt"]
+        system_prompt = config.CHARACTER["seer"]["system_prompt"]
         image_interpreter = llm_factory.create_image_interpreter(
             platform, model_name, system_prompt, uprofile["creativity"]
         )

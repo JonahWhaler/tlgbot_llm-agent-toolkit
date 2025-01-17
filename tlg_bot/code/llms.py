@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from llm_agent_toolkit import Core, ChatCompletionConfig  # type: ignore
 from llm_agent_toolkit._core import ImageInterpreter
 from llm_agent_toolkit.core import local, open_ai, deep_seek  #  local aka Ollama
+import chromadb
 
 from agent_tools import ToolFactory
 
@@ -15,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 class LLMFactory:
 
-    def __init__(self):
-        pass
+    def __init__(self, vdb: chromadb.ClientAPI):
+        self.tool_factory = ToolFactory(vdb=vdb)
 
     def create_chat_llm(
         self,
@@ -53,7 +54,7 @@ class LLMFactory:
         if tools:
             tool_list = []
             for t in tools:
-                tool = ToolFactory().get(tool_name=t)
+                tool = self.tool_factory.get(tool_name=t)
                 if tool is None:
                     raise ValueError(f"Requested tool not found. {t}")
                 tool_list.append(tool)
