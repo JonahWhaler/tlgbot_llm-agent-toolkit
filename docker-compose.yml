@@ -1,6 +1,6 @@
 services:
-  tlgbot:
-    container_name: tlg_bot
+  tlgbot_dev:
+    container_name: tlg_bot_dev
     build: ./tlg_bot/
     restart: always
     stdin_open: true
