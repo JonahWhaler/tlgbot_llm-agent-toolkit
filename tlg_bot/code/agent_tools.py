@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 import random
 import json
@@ -85,7 +86,6 @@ class DuckDuckGoSearchTool(Tool):
         query = params.get("query", None)
         top_n = 5
 
-        output = {}
         top_search = []
         with DDGS() as ddgs:
             for r in ddgs.text(
@@ -99,12 +99,10 @@ class DuckDuckGoSearchTool(Tool):
             tasks = [self.fetch_async(session, r["href"]) for r in top_search]
             search_results = await asyncio.gather(*tasks)
             for r, sr in zip(top_search, search_results):
-                r["html"] = sr
+                if sr:
+                    r["html"] = sr
         web_search_result = "\n\n".join([json.dumps(r) for r in top_search])
-        output["result"] = [
-            ("web_search_result", web_search_result, datetime.now().isoformat(), True)
-        ]
-        return str(output)
+        return web_search_result
 
     def run(self, params: str) -> dict:
         # Validate parameters
@@ -115,7 +113,6 @@ class DuckDuckGoSearchTool(Tool):
         query = params.get("query", None)
         top_n = 5
 
-        output = {}
         top_search = []
         with DDGS() as ddgs:
             try:
@@ -130,13 +127,12 @@ class DuckDuckGoSearchTool(Tool):
                 logger.error(error)
 
         for r in top_search:
-            r["html"] = self.fetch(url=r["href"])
+            page = self.fetch(url=r["href"])
+            if page:
+                r["html"] = page
 
         web_search_result = "\n\n".join([json.dumps(r) for r in top_search])
-        output["result"] = [
-            ("web_search_result", web_search_result, datetime.now().isoformat(), True)
-        ]
-        return str(output)
+        return web_search_result
 
     async def fetch_async(self, session, url):
         try:
@@ -144,9 +140,9 @@ class DuckDuckGoSearchTool(Tool):
             async with session.get(url, headers=self.headers) as response:
                 data = await response.text()
                 soup = BeautifulSoup(data, "html.parser")
-                return soup.find("body").text
+                return self.remove_whitespaces(soup.find("body").text)
         except Exception as _:
-            return "Webpage not available, either due to an error or due to lack of access permissions to the site."
+            return None
 
     def fetch(self, url: str):
         try:
@@ -155,12 +151,20 @@ class DuckDuckGoSearchTool(Tool):
             body = soup.find("body")
             if body:
                 t = body.text
-                t = t.replace("\n\n", "\n")
-                t = t.replace("\\n\n", "\\n")
+                t = self.remove_whitespaces(t)
                 return t
-            return "Webpage not available, either due to an error or due to lack of access permissions to the site."
+            return None
         except Exception as _:
-            return "Webpage not available, either due to an error or due to lack of access permissions to the site."
+            return None
+
+    @staticmethod
+    def remove_whitespaces(document_content: str) -> str:
+        original_len = len(document_content)
+        cleaned_text = re.sub(r"\s+", " ", document_content)
+        cleaned_text = re.sub(r"\n{3,}", "\n", cleaned_text)
+        updated_len = len(cleaned_text)
+        logger.info("Reduce from %d to %d", original_len, updated_len)
+        return cleaned_text
 
 
 def current_datetime(timezone: str = "Asia/Kuala_Lumpur"):
