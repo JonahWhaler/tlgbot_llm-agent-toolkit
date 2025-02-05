@@ -68,6 +68,7 @@ def run_bot(bot: Application) -> None:
 
     bot.add_handler(MessageHandler(filters.TEXT, handlers.message_handler), group=1)
     bot.add_handler(MessageHandler(filters.PHOTO, handlers.photo_handler), group=1)
+    bot.add_handler(MessageHandler(filters.VOICE, handlers.voice_handler), group=1)
     bot.add_error_handler(handlers.error_handler)
     bot.run_polling(poll_interval=1.0)
 
@@ -154,7 +155,6 @@ if __name__ == "__main__":
         max_retry = int(max_retry)
 
     while True:
-        logging.warning(">>")
         try:
             aio_rate_limiter = AIORateLimiter(
                 overall_max_rate=10, overall_time_period=1, max_retries=max_retry

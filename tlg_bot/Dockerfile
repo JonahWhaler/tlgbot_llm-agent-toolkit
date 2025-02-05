@@ -4,7 +4,7 @@ RUN apt-get update
 
 RUN apt-get install -y build-essential
 
-RUN apt-get install -y python3 python3-pip python3-dev python3-venv
+RUN apt-get install -y python3 python3-pip python3-dev python3-venv ffmpeg
 
 # Audio
 # RUN apt-get install -y ffmpeg libopus-dev

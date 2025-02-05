@@ -30,7 +30,7 @@ import storage
 import custom_library
 import custom_workflow
 import config
-
+from transcriber import TranscriberFactory
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +47,18 @@ main_vdb: chromadb.ClientAPI = custom_library.ChromaDBFactory.get_instance(
     persist=True, persist_directory="/temp/vect"
 )
 llm_factory = LLMFactory(vdb=main_vdb)
+# agent_zero = llm_factory.create_chat_llm(
+#     "deepseek", "deepseek-chat", "extractor", 0.3, True
+# )
+# agent_router = llm_factory.create_chat_llm(
+#     "deepseek", "deepseek-chat", "router", 0.3, True
+# )
 agent_zero = llm_factory.create_chat_llm(
-    "deepseek", "deepseek-chat", "extractor", 0.3, True
+    "openai", "gpt-4o-mini", "extractor", 0.3, True
 )
-agent_router = llm_factory.create_chat_llm(
-    "deepseek", "deepseek-chat", "router", 0.3, True
+agent_router = llm_factory.create_chat_llm("openai", "gpt-4o-mini", "router", 0.3, True)
+transcriber_factory = TranscriberFactory(
+    provider="local", model_name="turbo", output_directory="/temp", audio_parameter=None
 )
 
 
@@ -529,9 +536,60 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
 
         register_user(identifier)
         register_memory(identifier)
-        await custom_workflow.update_memory(
-            agent_zero, chat_memory, db, identifier, message.text
+        if message.text:
+            await custom_workflow.update_memory(
+                agent_zero, chat_memory, db, identifier, message.text
+            )
+        if message.voice:
+            voice_file_id = message.voice.file_id
+            temp_path = f"/temp/{identifier}/{voice_file_id}.ogg"
+            saved: bool = await store_to_drive(voice_file_id, temp_path, context)
+            if saved:
+                audio_agent = transcriber_factory.get_transcriber()
+                responses = await audio_agent.transcribe_async(
+                    prompt="voice input",
+                    filepath=temp_path,
+                    tmp_directory=f"/temp/{identifier}",
+                )
+                transcript = responses[0]["content"]
+                transcript_json = json.loads(transcript)
+                content = ""
+                for t in transcript_json["transcript"]:
+                    content += t["text"] + "\n"
+
+                await reply(message, f"**Whisper 🎤**:\n{content}")
+                await custom_workflow.update_memory(
+                    agent_zero, chat_memory, db, identifier, content
+                )
+
+
+async def store_to_drive(file_id: str, temp_path: str, context: CallbackContext):
+    from telegram.error import TelegramError
+
+    if os.path.exists(temp_path):
+        return False
+    try:
+        _file = await context.bot.get_file(
+            file_id,
+            read_timeout=300,
+            write_timeout=300,
+            connect_timeout=300,
+            pool_timeout=300,
         )
+        await _file.download_to_drive(
+            temp_path,
+            read_timeout=3000,
+            write_timeout=3000,
+            connect_timeout=3000,
+            pool_timeout=300,
+        )
+        return True
+    except TelegramError as tg_err:
+        logger.error("[store_to_drive]=TelegramError: %s", str(tg_err))
+    except Exception as e:
+        logger.error("[store_to_drive]=Exception: %s", str(e))
+    # raise RuntimeError(f"({file_id}, {temp_path}) => File download failed.")
+    return False
 
 
 async def help_handler(update: Update, context: CallbackContext) -> None:
@@ -942,5 +1000,99 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
         umemory.push({"role": "assistant", "content": content})
 
         await message.reply_text("Memory has been compressed.")
+
+    logger.info("Released lock for user: %s", identifier)
+
+
+async def voice_handler(update: Update, context: CallbackContext) -> None:
+    global chat_memory, user_locks, db, user_stats, agent_router
+
+    logger.info("The VOICE!!!")
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        message = getattr(update, "edited_message", None)
+        if message is None:
+            raise ValueError("Message is None.")
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_user_lock(identifier)
+    if ulock.locked():
+        logger.info("Please wait for your previous request to finish.")
+        return
+
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, "Exceeded rate limit. Please try again later.")
+            logger.info("Released lock for user: %s", identifier)
+            return
+
+        umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
+        if umemory is None:
+            raise ValueError("Memory is None.")
+
+        recent_conversation = umemory.last_n(n=config.MEMORY_LEN)
+        if len(recent_conversation) == 0:
+            raise ValueError("Recent Conversation is None.")
+
+        prompt = recent_conversation[-1]["content"]
+        logger.info("Prompt: %s", prompt)
+        if len(recent_conversation) > 1:
+            recent_conversation = recent_conversation[:-1]  # The last one is the prompt
+        else:
+            recent_conversation = None
+
+        uprofile = db.get(identifier)
+        assert uprofile is not None
+
+        platform = uprofile["platform_t2t"]
+        model_name = uprofile["model_t2t"]
+        character = uprofile["character"]
+        umetadata = uprofile["memory"]
+        if umetadata:
+            if recent_conversation:
+                recent_conversation.insert(
+                    0,
+                    {"role": "system", "content": f"<metadata>{umetadata}</metadata>"},
+                )
+
+        auto_routing = uprofile["auto_routing"]
+        if auto_routing:
+            if recent_conversation and len(recent_conversation) >= 3:
+                character = await custom_workflow.find_best_agent(
+                    agent_router, prompt, context=recent_conversation[-3:]
+                )
+            else:
+                character = await custom_workflow.find_best_agent(
+                    agent_router, prompt, context=None
+                )
+
+        logger.info("Model Name=%s, Character=%s", model_name, character)
+        llm = llm_factory.create_chat_llm(
+            platform, model_name, character, uprofile["creativity"]
+        )
+        logger.info("llm=%s", llm)
+        responses = await call_llm(
+            llm, prompt, recent_conversation, ResponseMode.DEFAULT, None
+        )
+        logger.info("Generated %d responses.", len(responses))
+        for response in responses:
+            logger.info("\nResponse: %s", response["content"])
+
+        response = responses[-1]
+        content = response["content"]
+
+        umemory.push({"role": "assistant", "content": content})
+
+        output_string = config.CHARACTER[character]["name"] + ":\n" + content
+
+        if output_string is None or output_string == "":
+            output_string = "Sorry."
+
+        await reply(message, output_string)
 
     logger.info("Released lock for user: %s", identifier)
