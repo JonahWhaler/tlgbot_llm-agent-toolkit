@@ -56,7 +56,7 @@ async def find_best_agent(
 
 async def update_memory(
     agent: Core,
-    cmemory: ShortTermMemory,
+    cmemory: dict[str, ShortTermMemory],
     db: storage.SQLite3_Storage,
     identifier: str,
     new_content: str | None,
@@ -65,6 +65,7 @@ async def update_memory(
     if new_content and umemory is not None:
         if not new_content.startswith("/"):
             umemory.push({"role": "user", "content": new_content})
+            cmemory[identifier] = umemory
 
     uprofile = db.get(identifier)
     if DEBUG == "1":
