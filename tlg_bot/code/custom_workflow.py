@@ -78,17 +78,33 @@ async def update_memory(
     selected_interactions = []
     for interaction in old_interactions:
         if interaction["role"] == "user":
-            selected_interactions.append(interaction)
+            selected_interactions.append(
+                {"type": "query", "content": interaction["content"]}
+            )
+        else:
+            selected_interactions.append(
+                {"type": "response", "content": interaction["content"]}
+            )
 
-    context = selected_interactions if len(selected_interactions) > 0 else None
+    # context = selected_interactions if len(selected_interactions) > 0 else None
     existing_memory = uprofile["memory"]
+    instructions = []
     if existing_memory:
-        prompt = f"Update user's metadata. Existing metadata: \n{existing_memory}"
+        instructions.extend(
+            [
+                "Instruction:\nUpdate user's metadata.",
+                f"Existing Metadata: {existing_memory}",
+            ]
+        )
     else:
-        prompt = "Construct user's metadata."
+        instructions.append("Construct user's metadata.")
 
+    if len(selected_interactions) > 0:
+        instructions.append(f"Recent Interactions: {json.dumps(selected_interactions)}")
+
+    prompt = "\n\n".join(instructions)
     responses = await agent.run_async(
-        query=prompt, context=context, mode=ResponseMode.JSON
+        query=prompt, context=None, mode=ResponseMode.JSON
     )
     uprofile["memory"] = responses[0]["content"]
     db.set(identifier, uprofile)
