@@ -46,13 +46,11 @@ user_stats: dict[str, bool] = {}
 main_vdb: chromadb.ClientAPI = custom_library.ChromaDBFactory.get_instance(
     persist=True, persist_directory="/temp/vect"
 )
-llm_factory = LLMFactory(vdb=main_vdb)
-# agent_zero = llm_factory.create_chat_llm(
-#     "deepseek", "deepseek-chat", "extractor", 0.3, True
-# )
-# agent_router = llm_factory.create_chat_llm(
-#     "deepseek", "deepseek-chat", "router", 0.3, True
-# )
+web_db = storage.SQLite3_Storage(
+    "/db/ost.db", "web", False
+)  # TODO - Handle risk for race condition
+llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
+
 agent_zero = llm_factory.create_chat_llm(
     "openai", "gpt-4o-mini", "extractor", 0.3, True
 )

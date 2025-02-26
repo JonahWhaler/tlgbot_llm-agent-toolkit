@@ -14,6 +14,7 @@ import chromadb
 
 from agent_tools import ToolFactory
 
+from storage import SQLite3_Storage
 from config import PARAMETER, PROVIDER, OLLAMA_HOST, CHARACTER
 
 logger = logging.getLogger(__name__)
@@ -21,8 +22,10 @@ logger = logging.getLogger(__name__)
 
 class LLMFactory:
 
-    def __init__(self, vdb: chromadb.ClientAPI):
-        self.tool_factory = ToolFactory(vdb=vdb)
+    def __init__(self, vdb: chromadb.ClientAPI, webcache: SQLite3_Storage):
+        self.tool_factory = ToolFactory(
+            vdb=vdb, web_db=webcache
+        )  # TODO - Handle risk for race condition
 
     def create_chat_llm(
         self,
