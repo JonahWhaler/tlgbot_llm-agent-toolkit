@@ -41,7 +41,7 @@ db = storage.SQLite3_Storage("/db/ost.db", "user_profile", False)
 
 rl_storage = BasicStorage()
 rate_limiter = grl(rl_storage, 1, 1, 100)
-user_stats: dict[str, bool] = {}
+user_stats: dict[str, tuple[bool, str]] = {}
 
 main_vdb: chromadb.ClientAPI = custom_library.ChromaDBFactory.get_instance(
     persist=True, persist_directory="/temp/vect"
@@ -524,9 +524,15 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         if message is None:
             raise ValueError("Message is None.")
         # is_edit = True
+
     identifier: str = (
         f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
     )
+
+    if message.chat.id not in config.PREMIUM_MEMBERS:
+        logger.warning("Unauthorized Access: %d", message.chat.id)
+        user_stats[identifier] = (False, "Unauthorized Access")
+        return
 
     ulock = get_user_lock(identifier)
     if ulock.locked():
@@ -534,7 +540,10 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
 
     async with ulock:
         allowed_to_pass = rate_limiter.check_limit(identifier)
-        user_stats[identifier] = allowed_to_pass
+        user_stats[identifier] = (
+            allowed_to_pass,
+            "OK" if allowed_to_pass else "Exceed Rate Limit",
+        )
         if not allowed_to_pass:
             return
 
@@ -742,9 +751,9 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
-        allowed_to_pass = user_stats[identifier]
+        allowed_to_pass, _msg = user_stats[identifier]
         if not allowed_to_pass:
-            await reply(message, "Exceeded rate limit. Please try again later.")
+            await reply(message, _msg)
             logger.info("Released lock for user: %s", identifier)
             return
 
@@ -845,17 +854,17 @@ async def photo_handler(update: Update, context: CallbackContext):
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
-        allowed_to_pass = user_stats[identifier]
+        allowed_to_pass, _msg = user_stats[identifier]
         if not allowed_to_pass:
-            await reply(message, "Exceeded rate limit. Please try again later.")
+            await reply(message, _msg)
             logger.info("Released lock for user: %s", identifier)
             return
 
         user_folder = f"/temp/{identifier}"
         if not os.path.exists(user_folder):
             os.mkdir(user_folder)
+
         photo = message.photo[-1]
-        file_id: str = photo.file_id
 
         photo_file = await context.bot.get_file(file_id)
         export_path = os.path.join(
@@ -945,6 +954,12 @@ async def reset_chatmemory_handler(update: Update, context: CallbackContext):
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
         umemory = chat_memory.get(identifier, None)
         if umemory is None:
             raise ValueError("Memory is None.")
@@ -956,7 +971,7 @@ async def reset_chatmemory_handler(update: Update, context: CallbackContext):
 
 
 async def reset_user_handler(update: Update, context: CallbackContext):
-    global user_locks
+    global user_locks, user_stats
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -975,6 +990,12 @@ async def reset_user_handler(update: Update, context: CallbackContext):
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
         register_memory(identifier, force=True)
         register_user(identifier, force=True)
         await message.reply_text("User has been reset.")
@@ -987,7 +1008,7 @@ class CompressContent(BaseModel):
 
 
 async def compress_memory_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, db
+    global chat_memory, user_locks, db, user_stats
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     # edited_message: Optional[telegram.Message] = getattr(update, "edited_message", None)
@@ -1009,6 +1030,12 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
         umemory = chat_memory.get(identifier, None)
         if umemory is None:
             raise ValueError("Memory is None.")
@@ -1076,9 +1103,9 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
-        allowed_to_pass = user_stats[identifier]
+        allowed_to_pass, _msg = user_stats[identifier]
         if not allowed_to_pass:
-            await reply(message, "Exceeded rate limit. Please try again later.")
+            await reply(message, _msg)
             logger.info("Released lock for user: %s", identifier)
             return
 
