@@ -332,22 +332,22 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
 
 
 async def show_model_menu(update: Update, context: CallbackContext) -> None:
+    global user_stats
+
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
         message = getattr(update, "edited_message", None)
         if message is None:
             raise ValueError("Message is None.")
 
-    if message.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
-        logger.warning(
-            "User (%d |%s) is not a premium member",
-            message.from_user.id,
-            message.from_user.username,
-        )
-        await reply(
-            message, "You are not a premium member. Contact the author to upgrade."
-        )
-        return
+
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
 
     output_string = "Click to select a model:\n"
 
@@ -372,7 +372,7 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
 
 
 async def set_model_handler(update: Update, context: CallbackContext) -> None:
-    global db
+    global db, user_stats
 
     callback_query = update.callback_query
 
@@ -408,6 +408,12 @@ async def set_model_handler(update: Update, context: CallbackContext) -> None:
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
         query = update.callback_query
         await query.answer()
 
@@ -935,7 +941,7 @@ async def photo_handler(update: Update, context: CallbackContext):
 
 
 async def reset_chatmemory_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks
+    global chat_memory, user_locks, user_stats
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
