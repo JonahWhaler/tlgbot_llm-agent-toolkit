@@ -4,7 +4,12 @@ from pydantic import BaseModel
 
 from llm_agent_toolkit import Core, ChatCompletionConfig  # type: ignore
 from llm_agent_toolkit._core import ImageInterpreter
-from llm_agent_toolkit.core import local, open_ai, deep_seek  #  local aka Ollama
+from llm_agent_toolkit.core import (
+    local,
+    open_ai,
+    deep_seek,
+    gemini,
+)  #  local aka Ollama
 import chromadb
 
 from agent_tools import ToolFactory
@@ -27,7 +32,7 @@ class LLMFactory:
         temperature: float,
         structured_output: bool = False,
     ) -> Core:
-        supported_providers = ["ollama", "openai", "deepseek"]
+        supported_providers = ["ollama", "openai", "deepseek", "gemini"]
         if platform not in supported_providers:
             raise ValueError(
                 f"Invalid provider. Supported providers: {supported_providers}"
@@ -94,6 +99,15 @@ class LLMFactory:
                     llm = open_ai.Text_to_Text(
                         system_prompt=system_prompt, config=config, tools=tool_list
                     )
+        elif platform == "gemini":
+            if gemini.GeminiCore.csv_path is None:
+                gemini.GeminiCore.load_csv("/config/gemini.csv")
+            if structured_output:
+                llm = gemini.GMN_StructuredOutput_Core(
+                    system_prompt=system_prompt, config=config
+                )
+            else:
+                llm = gemini.Text_to_Text(system_prompt=system_prompt, config=config)
         else:  # platform == "deepseek":
             if structured_output:
                 llm = deep_seek.Text_to_Text_SO(
