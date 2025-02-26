@@ -750,6 +750,54 @@ async def call_ii(
     raise ValueError(f"max_output_tokens <= 0. Retry up to {MAX_RETRY} times.")
 
 
+async def call_chat_llm(
+    profile: dict, memory: ShortTermMemory, prompt: str
+) -> tuple[str, ShortTermMemory]:
+    platform = profile["platform_t2t"]
+    model_name = profile["model_t2t"]
+    character = profile["character"]
+    metadata = profile["memory"]
+
+    recent_conv = memory.last_n(config.MEMORY_LEN)
+    if len(recent_conv) > 2:
+        recent_conv = recent_conv[:-1]
+    else:
+        recent_conv = None
+    if metadata:
+        if recent_conv:
+            recent_conv.insert(
+                0, {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
+            )
+        else:
+            recent_conv = [
+                {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
+            ]
+
+    auto_routing = profile["auto_routing"]
+    if auto_routing:
+        character = await custom_workflow.find_best_agent(
+            agent_router,
+            prompt,
+            context=recent_conv[-3:] if recent_conv else recent_conv,
+        )
+
+    llm = llm_factory.create_chat_llm(
+        platform, model_name, character, profile["creativity"]
+    )
+    responses = await call_llm(llm, prompt, recent_conv, ResponseMode.DEFAULT, None)
+
+    logger.info("Generated %d responses.", len(responses))
+    for response in responses:
+        # logger.info("\nResponse: %s", response["content"])
+        memory.push({"role": "assistant", "content": response["content"]})
+
+    final_response = responses[-1]
+    output_string = (
+        config.CHARACTER[character]["name"] + ":\n" + final_response["content"]
+    )
+    return output_string, memory
+
+
 async def message_handler(update: Update, context: CallbackContext) -> None:
     global chat_memory, user_locks, db, user_stats, agent_router
 
@@ -784,58 +832,11 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         if umemory is None:
             raise ValueError("Memory is None.")
 
-        recent_conversation = umemory.last_n(n=config.MEMORY_LEN)
-
-        if len(recent_conversation) > 1:
-            recent_conversation = recent_conversation[:-1]  # The last one is the prompt
-        else:
-            recent_conversation = None
-
         uprofile = db.get(identifier)
         assert uprofile is not None
 
-        platform = uprofile["platform_t2t"]
-        model_name = uprofile["model_t2t"]
-        character = uprofile["character"]
-        umetadata = uprofile["memory"]
-        if umetadata:
-            if recent_conversation:
-                recent_conversation.insert(
-                    0,
-                    {"role": "system", "content": f"<metadata>{umetadata}</metadata>"},
-                )
-
-        auto_routing = uprofile["auto_routing"]
-        if auto_routing:
-            if recent_conversation and len(recent_conversation) >= 3:
-                character = await custom_workflow.find_best_agent(
-                    agent_router, prompt, context=recent_conversation[-3:]
-                )
-            else:
-                character = await custom_workflow.find_best_agent(
-                    agent_router, prompt, context=None
-                )
-
-        llm = llm_factory.create_chat_llm(
-            platform, model_name, character, uprofile["creativity"]
-        )
-        responses = await call_llm(
-            llm, prompt, recent_conversation, ResponseMode.DEFAULT, None
-        )
-        logger.info("Generated %d responses.", len(responses))
-        for response in responses:
-            logger.info("\nResponse: %s", response["content"])
-
-        response = responses[-1]
-        content = response["content"]
-
-        umemory.push({"role": "assistant", "content": content})
-
-        output_string = config.CHARACTER[character]["name"] + ":\n" + content
-
-        if output_string is None or output_string == "":
-            output_string = "Sorry."
-
+        output_string, updated_memory = await call_chat_llm(uprofile, umemory, prompt)
+        chat_memory[identifier] = updated_memory
         await reply(message, output_string)
 
     logger.info("Released lock for user: %s", identifier)
