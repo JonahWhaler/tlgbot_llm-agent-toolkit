@@ -146,183 +146,189 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
     logger.info("Released lock for user: %s", identifier)
 
 
-async def show_creativity_menu(update: Update, context: CallbackContext) -> None:
-    message: Optional[telegram.Message] = getattr(update, "message", None)
-    if message is None:
-        message = getattr(update, "edited_message", None)
-        if message is None:
-            raise ValueError("Message is None.")
+# async def show_creativity_menu(update: Update, context: CallbackContext) -> None:
+#     message: Optional[telegram.Message] = getattr(update, "message", None)
+#     if message is None:
+#         message = getattr(update, "edited_message", None)
+#         if message is None:
+#             raise ValueError("Message is None.")
 
-    output_string = "Click to select a level:\n"
+#     output_string = "Click to select a level:\n"
 
-    keyboard = []
-    for level in ["zero", "low", "medium", "high", "extreme"]:
-        keyboard.append(
-            [
-                telegram.InlineKeyboardButton(
-                    level, callback_data=f"set_creativity|{level}"
-                )
-            ]
-        )
+#     keyboard = []
+#     for level in ["zero", "low", "medium", "high", "extreme"]:
+#         keyboard.append(
+#             [
+#                 telegram.InlineKeyboardButton(
+#                     level, callback_data=f"set_creativity|{level}"
+#                 )
+#             ]
+#         )
 
-    reply_markup = telegram.InlineKeyboardMarkup(keyboard)
-    await message.reply_text(
-        output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
-    )
-
-
-async def set_creativity_handler(update: Update, context: CallbackContext) -> None:
-    global db
-
-    callback_query = update.callback_query
-
-    if callback_query is None:
-        raise ValueError("Callback query is None.")
-
-    message = callback_query.message
-
-    if message is None:
-        raise ValueError("Message is None.")
-
-    identifier: str = (
-        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
-    )
-
-    ulock = get_user_lock(identifier)
-    if ulock.locked():
-        logger.info("Please wait for your previous request to finish.")
-        return
-
-    async with ulock:
-        logger.info("Acquired lock for user: %s", identifier)
-        query = update.callback_query
-        await query.answer()
-
-        new_creativity = query.data.split("|")[1]
-        uprofile = db.get(identifier)
-        assert uprofile is not None
-
-        if new_creativity == "zero":
-            score = 0.0
-        elif new_creativity == "low":
-            score = 0.3
-        elif new_creativity == "medium":
-            score = 0.7
-        elif new_creativity == "high":
-            score = 1.0
-        elif new_creativity == "extreme":
-            score = 1.2
-        else:
-            raise ValueError("Invalid creativity level.")
-
-        uprofile["creativity"] = score
-        db.set(identifier, uprofile)
-
-        await context.bot.send_message(
-            chat_id=message.chat.id,
-            text=f"Creativity set to {new_creativity}.",
-            parse_mode=ParseMode.HTML,
-        )
-
-    logger.info("Released lock for user: %s", identifier)
+#     reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+#     await message.reply_text(
+#         output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+#     )
 
 
-async def show_character_menu(update: Update, context: CallbackContext) -> None:
-    message: Optional[telegram.Message] = getattr(update, "message", None)
-    if message is None:
-        message = getattr(update, "edited_message", None)
-        if message is None:
-            raise ValueError("Message is None.")
+# async def set_creativity_handler(update: Update, context: CallbackContext) -> None:
+#     global db
 
-    if message.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
-        logger.warning(
-            "User (%d |%s) is not a premium member",
-            message.from_user.id,
-            message.from_user.username,
-        )
-        await reply(
-            message, "You are not a premium member. Contact the author to upgrade."
-        )
-        return
+#     callback_query = update.callback_query
 
-    characters = []
-    for character in config.CHARACTER.keys():
-        if config.CHARACTER[character]["access"] == "private":
-            continue
-        characters.append(character)
+#     if callback_query is None:
+#         raise ValueError("Callback query is None.")
 
-    output_string = "Click to select a character:\n"
+#     message = callback_query.message
 
-    keyboard = []
-    for character in characters:
-        name = config.CHARACTER[character]["name"]
-        keyboard.append(
-            [
-                telegram.InlineKeyboardButton(
-                    name, callback_data=f"set_character|{character}"
-                )
-            ]
-        )
+#     if message is None:
+#         raise ValueError("Message is None.")
 
-    reply_markup = telegram.InlineKeyboardMarkup(keyboard)
-    await message.reply_text(
-        output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
-    )
+#     identifier: str = (
+#         f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+#     )
+
+#     ulock = get_user_lock(identifier)
+#     if ulock.locked():
+#         logger.info("Please wait for your previous request to finish.")
+#         return
+
+#     async with ulock:
+#         logger.info("Acquired lock for user: %s", identifier)
+#         query = update.callback_query
+#         await query.answer()
+
+#         new_creativity = query.data.split("|")[1]
+#         uprofile = db.get(identifier)
+#         assert uprofile is not None
+
+#         if new_creativity == "zero":
+#             score = 0.0
+#         elif new_creativity == "low":
+#             score = 0.3
+#         elif new_creativity == "medium":
+#             score = 0.7
+#         elif new_creativity == "high":
+#             score = 1.0
+#         elif new_creativity == "extreme":
+#             score = 1.2
+#         else:
+#             raise ValueError("Invalid creativity level.")
+
+#         uprofile["creativity"] = score
+#         db.set(identifier, uprofile)
+
+#         await context.bot.send_message(
+#             chat_id=message.chat.id,
+#             text=f"Creativity set to {new_creativity}.",
+#             parse_mode=ParseMode.HTML,
+#         )
+
+#     logger.info("Released lock for user: %s", identifier)
 
 
-async def set_character_handler(update: Update, context: CallbackContext) -> None:
-    global db
+# async def show_character_menu(update: Update, context: CallbackContext) -> None:
+#     message: Optional[telegram.Message] = getattr(update, "message", None)
+#     if message is None:
+#         message = getattr(update, "edited_message", None)
+#         if message is None:
+#             raise ValueError("Message is None.")
 
-    callback_query = update.callback_query
+#     if message.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
+#         logger.warning(
+#             "User (%d |%s) is not a premium member",
+#             message.from_user.id,
+#             message.from_user.username,
+#         )
+#         await reply(
+#             message, "You are not a premium member. Contact the author to upgrade."
+#         )
+#         return
 
-    if callback_query is None:
-        raise ValueError("Callback query is None.")
+#     characters = []
+#     for character in config.CHARACTER.keys():
+#         if config.CHARACTER[character]["access"] == "private":
+#             continue
+#         characters.append(character)
 
-    message = callback_query.message
+#     output_string = "Click to select a character:\n"
 
-    if message is None:
-        raise ValueError("Message is None.")
+#     keyboard = []
+#     for character in characters:
+#         name = config.CHARACTER[character]["name"]
+#         keyboard.append(
+#             [
+#                 telegram.InlineKeyboardButton(
+#                     name, callback_data=f"set_character|{character}"
+#                 )
+#             ]
+#         )
 
-    if callback_query.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
-        logger.warning(
-            "User (%d | %s) is not a premium member.",
-            callback_query.from_user.id,
-            callback_query.from_user.username,
-        )
-        await context.bot.send_message(
-            chat_id=message.chat.id,
-            text="You are not a premium member. Contact the author to upgrade.",
-            parse_mode=ParseMode.HTML,
-        )
-        return
+#     reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+#     await message.reply_text(
+#         output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+#     )
 
-    identifier: str = (
-        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
-    )
 
-    ulock = get_user_lock(identifier)
-    if ulock.locked():
-        logger.info("Please wait for your previous request to finish.")
-        return
+# async def set_character_handler(update: Update, context: CallbackContext) -> None:
+#     global db, user_stats
 
-    async with ulock:
-        logger.info("Acquired lock for user: %s", identifier)
-        query = update.callback_query
-        await query.answer()
+#     callback_query = update.callback_query
 
-        new_character = query.data.split("|")[1]
-        uprofile = db.get(identifier)
-        assert uprofile is not None
-        uprofile["character"] = new_character
-        db.set(identifier, uprofile)
+#     if callback_query is None:
+#         raise ValueError("Callback query is None.")
 
-        await context.bot.send_message(
-            chat_id=message.chat.id,
-            text=f"{config.CHARACTER[new_character]['welcome_message']}",
-            parse_mode=ParseMode.HTML,
-        )
+#     message = callback_query.message
 
-    logger.info("Released lock for user: %s", identifier)
+#     if message is None:
+#         raise ValueError("Message is None.")
+
+#     # if callback_query.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
+#     #     logger.warning(
+#     #         "User (%d | %s) is not a premium member.",
+#     #         callback_query.from_user.id,
+#     #         callback_query.from_user.username,
+#     #     )
+#     #     await context.bot.send_message(
+#     #         chat_id=message.chat.id,
+#     #         text="You are not a premium member. Contact the author to upgrade.",
+#     #         parse_mode=ParseMode.HTML,
+#     #     )
+#     #     return
+
+#     identifier: str = (
+#         f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+#     )
+
+#     ulock = get_user_lock(identifier)
+#     if ulock.locked():
+#         logger.info("Please wait for your previous request to finish.")
+#         return
+
+#     async with ulock:
+#         logger.info("Acquired lock for user: %s", identifier)
+#         allowed_to_pass, _msg = user_stats[identifier]
+#         if not allowed_to_pass:
+#             await reply(message, _msg)
+#             logger.info("Released lock for user: %s", identifier)
+#             return
+
+#         query = update.callback_query
+#         await query.answer()
+
+#         new_character = query.data.split("|")[1]
+#         uprofile = db.get(identifier)
+#         assert uprofile is not None
+#         uprofile["character"] = new_character
+#         db.set(identifier, uprofile)
+
+#         await context.bot.send_message(
+#             chat_id=message.chat.id,
+#             text=f"{config.CHARACTER[new_character]['welcome_message']}",
+#             parse_mode=ParseMode.HTML,
+#         )
+
+#     logger.info("Released lock for user: %s", identifier)
 
 
 async def show_model_menu(update: Update, context: CallbackContext) -> None:
