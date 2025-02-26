@@ -377,22 +377,15 @@ class DDGSmartSearchTool(Tool):
 
         async with aiohttp.ClientSession() as session:
             tasks = []
-            pages_w_full_info = []
-            pages_wo_full_info = []
             for r in top_search:
-                logger.info("SEARCH: %s", r["href"])
-                page_content = self.cache_db.get(r["href"])
-                if page_content is None:
-                    tasks.append(self.fetch_async(session, r["href"]))
-                    pages_wo_full_info.append(r)
-                else:
-                    logger.info("SKIP: %s", r["href"])
-                    pages_w_full_info.append(page_content)
+                tasks.append(self.fetch_async(session, r["href"]))
 
             search_results = await asyncio.gather(*tasks)
-            for r, sr in zip(pages_wo_full_info, search_results):
+            for r, sr in zip(top_search, search_results):
                 if sr:
-                    if len(sr) > 1024:
+                    if len(sr) < 1024:
+                        r["html"] = sr
+                    else:
                         prompt = f"""Query: {query}
                         Here is the web search result:
                         ---
@@ -406,11 +399,8 @@ class DDGSmartSearchTool(Tool):
                         summarized_content = response["content"]
                         logger.info("Sumarized page content: %s", summarized_content)
                         r["html"] = summarized_content
-                    else:
-                        r["html"] = sr
-                    self.cache_db.set(r["href"], r)
-            pages_w_full_info.extend(pages_wo_full_info)
-        web_search_result = "\n\n".join([json.dumps(r) for r in pages_w_full_info])
+                        
+        web_search_result = "\n\n".join([json.dumps(r) for r in top_search])
         return web_search_result
 
     def run(self, params: str) -> dict:
@@ -460,22 +450,37 @@ class DDGSmartSearchTool(Tool):
 
     async def fetch_async(self, session, url):
         try:
+            # Load from cache
+            result = self.cache_db.get(url)
+            if result:
+                return result
+            
             await asyncio.sleep(self.pause)
             async with session.get(url, headers=self.headers) as response:
                 data = await response.text()
                 soup = BeautifulSoup(data, "html.parser")
-                return self.remove_whitespaces(soup.find("body").text)
+                output_string = self.remove_whitespaces(soup.find("body").text)
+                # Store to cache
+                self.cache_db.set(url, output_string)
+                return output_string
         except Exception as _:
             return None
 
     def fetch(self, url: str):
         try:
+            # Load from cache
+            result = self.cache_db.get(url)
+            if result:
+                return result
+
             page = requests.get(url=url, headers=self.headers, timeout=2, stream=False)
             soup = BeautifulSoup(page.text, "html.parser")
             body = soup.find("body")
             if body:
                 t = body.text
                 t = self.remove_whitespaces(t)
+                # Store to cache
+                self.cache_db.set(url, t)
                 return t
             return None
         except Exception as _:
