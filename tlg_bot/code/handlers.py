@@ -474,7 +474,7 @@ async def reply(message: telegram.Message, output_string: str) -> None:
                 )
                 try:
                     await message.reply_text(
-                        output_string, parse_mode=ParseMode.MARKDOWN_V2
+                        formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
                     )
                 except telegram.error.BadRequest as bre:
                     logger.error(bre)
