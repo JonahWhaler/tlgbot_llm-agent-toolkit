@@ -540,16 +540,28 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
             await custom_workflow.update_memory(
                 agent_zero, chat_memory, db, identifier, message.text
             )
-        if message.voice:
-            voice_file_id = message.voice.file_id
-            temp_path = f"/temp/{identifier}/{voice_file_id}.ogg"
-            saved: bool = await store_to_drive(voice_file_id, temp_path, context)
+
+        if message.voice or message.audio:
+            if message.voice:
+                file_id = message.voice.file_id
+                file_extension = message.voice.mime_type.split("/")[-1]
+            else:
+                file_id = message.audio.file_id
+                file_extension = message.audio.mime_type.split("/")[-1]
+
+            if file_extension == "mpeg":
+                file_extension = "mp3"
+
+            user_folder = f"/temp/{identifier}"
+            temp_path = os.path.join(user_folder, f"{file_id}.{file_extension}")
+            saved: bool = await store_to_drive(file_id, temp_path, context)
             if saved:
                 audio_agent = transcriber_factory.get_transcriber()
+                user_folder = f"/temp/{identifier}"
                 responses = await audio_agent.transcribe_async(
                     prompt="voice input",
                     filepath=temp_path,
-                    tmp_directory=f"/temp/{identifier}",
+                    tmp_directory=user_folder,
                 )
                 transcript = responses[0]["content"]
                 transcript_json = json.loads(transcript)
@@ -557,10 +569,45 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                 for t in transcript_json["transcript"]:
                     content += t["text"] + "\n"
 
-                await reply(message, f"**Whisper 🎤**:\n{content}")
-                await custom_workflow.update_memory(
-                    agent_zero, chat_memory, db, identifier, content
+                if message.voice:
+                    await reply(message, f"**Whisper 🎤**:\n{content}")
+                    await custom_workflow.update_memory(
+                        agent_zero,
+                        chat_memory,
+                        db,
+                        identifier,
+                        f"Voice Input:{content}",
+                    )
+                elif message.audio:
+                    filepostfix = datetime.now().isoformat()
+                    filepostfix = filepostfix.replace(":", "-")
+                    filepostfix = filepostfix.split(".")[0]
+
+                    filename = f"audio_{filepostfix}.txt"
+                    content_txt_path = os.path.join(user_folder, filename)
+                    with open(content_txt_path, "w", encoding="utf-8") as f:
+                        f.write(content)
+
+                    await message.reply_document(
+                        document=content_txt_path,
+                        caption=message.caption,
+                        allow_sending_without_reply=True,
+                        filename=filename,
+                    )
+                    await custom_workflow.update_memory(
+                        agent_zero,
+                        chat_memory,
+                        db,
+                        identifier,
+                        f"Audio Upload:{content}",
+                    )
+                # Remove sliced audio files
+                temp_files = list(
+                    filter(lambda x: x.startswith("slice"), os.listdir(user_folder))
                 )
+                for tfile in temp_files:
+                    tfile_path = os.path.join(f"{user_folder}/{tfile}")
+                    os.remove(tfile_path)
 
 
 async def store_to_drive(file_id: str, temp_path: str, context: CallbackContext):
@@ -1096,3 +1143,25 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         await reply(message, output_string)
 
     logger.info("Released lock for user: %s", identifier)
+
+
+async def audio_handler(update: Update, context: CallbackContext) -> None:
+    global chat_memory, user_locks, db, user_stats, agent_router
+
+    logger.info("The AUDIO!!!")
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        message = getattr(update, "edited_message", None)
+        if message is None:
+            raise ValueError("Message is None.")
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_user_lock(identifier)
+    if ulock.locked():
+        logger.info("Please wait for your previous request to finish.")
+        return
+
+    await reply(message, "COPY")
