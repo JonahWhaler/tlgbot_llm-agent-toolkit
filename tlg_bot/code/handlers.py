@@ -874,16 +874,15 @@ async def photo_handler(update: Update, context: CallbackContext):
 
         photo = message.photo[-1]
 
-        photo_file = await context.bot.get_file(file_id)
+        file_id: str = photo.file_id
         export_path = os.path.join(
             user_folder, generate_unique_filename(file_id, "jpg", True)
         )
-        await photo_file.download_to_drive(
-            export_path,
-            read_timeout=3000,
-            write_timeout=3000,
-            connect_timeout=3000,
-        )
+        saved: bool = await store_to_drive(file_id, export_path, context)
+        if not saved and not os.path.exists(export_path):
+            logger.warning("Failed to saved %s to \n%s.", file_id, export_path)
+            await reply(message, "Fail to process upload file. Please try again.")
+            return None
 
         umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
         if umemory is None:
