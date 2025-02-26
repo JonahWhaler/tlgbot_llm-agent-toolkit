@@ -397,19 +397,6 @@ async def set_model_handler(update: Update, context: CallbackContext) -> None:
     if message is None:
         raise ValueError("Message is None.")
 
-    if callback_query.from_user.id not in config.PREMIUM_MEMBERS and config.FREE == "0":
-        logger.warning(
-            "User (%d | %s) is not a premium member.",
-            callback_query.from_user.id,
-            callback_query.from_user.username,
-        )
-        await context.bot.send_message(
-            chat_id=message.chat.id,
-            text="You are not a premium member. Contact the author to upgrade.",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
     identifier: str = (
         f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
     )
