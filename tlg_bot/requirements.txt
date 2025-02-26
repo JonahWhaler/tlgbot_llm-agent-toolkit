@@ -1,4 +1,3 @@
-llm-agent-toolkit[transcriber,gemini]==0.0.29.2
 python-telegram-bot[rate-limiter]==21.10
 pygrl
 duckduckgo_search==7.2.1
