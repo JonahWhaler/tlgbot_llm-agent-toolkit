@@ -345,6 +345,14 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
         if message is None:
             raise ValueError("Message is None.")
 
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_user_lock(identifier)
+    if ulock.locked():
+        logger.info("Please wait for your previous request to finish.")
+        return
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
@@ -354,26 +362,26 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
             logger.info("Released lock for user: %s", identifier)
             return
 
-    output_string = "Click to select a model:\n"
+        output_string = "Click to select a model:\n"
 
-    keyboard = []
-    providers = list(config.PROVIDER.keys())
-    for provider in providers:
-        models = list(config.PROVIDER[provider]["t2t"])
-        for model_name in models:
-            name = f"{provider} - {model_name}"
-            keyboard.append(
-                [
-                    telegram.InlineKeyboardButton(
-                        name, callback_data=f"set_model|{provider}$$${model_name}"
-                    )
-                ]
-            )
+        keyboard = []
+        providers = list(config.PROVIDER.keys())
+        for provider in providers:
+            models = list(config.PROVIDER[provider]["t2t"])
+            for model_name in models:
+                name = f"{provider} - {model_name}"
+                keyboard.append(
+                    [
+                        telegram.InlineKeyboardButton(
+                            name, callback_data=f"set_model|{provider}$$${model_name}"
+                        )
+                    ]
+                )
 
-    reply_markup = telegram.InlineKeyboardMarkup(keyboard)
-    await message.reply_text(
-        output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
-    )
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+        await message.reply_text(
+            output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+        )
 
 
 async def set_model_handler(update: Update, context: CallbackContext) -> None:
