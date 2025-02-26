@@ -107,6 +107,11 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
 
     async with ulock:
         logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
 
         uprofile = db.get(identifier)
         assert uprofile is not None
