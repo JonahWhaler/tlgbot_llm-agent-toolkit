@@ -90,7 +90,7 @@ def register_memory(identifier: str, force: bool = False) -> None:
 
 
 async def show_character_handler(update: Update, context: CallbackContext) -> None:
-    global db
+    global db, user_stats
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
         message = getattr(update, "edited_message", None)
