@@ -31,6 +31,7 @@ import custom_library
 import custom_workflow
 import config
 from transcriber import TranscriberFactory
+import config
 
 logger = logging.getLogger(__name__)
 
