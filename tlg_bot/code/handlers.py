@@ -29,7 +29,6 @@ from pygrl import BasicStorage, GeneralRateLimiter as grl
 import storage
 import custom_library
 import custom_workflow
-import config
 from transcriber import TranscriberFactory
 import config
 
@@ -53,7 +52,7 @@ web_db = storage.SQLite3_Storage(
 llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
 agent_zero = llm_factory.create_chat_llm(
-    "openai", "gpt-4o-mini", "extractor", 0.3, True
+    "openai", "gpt-4o-mini", "extractor", 0.3, False
 )
 agent_router = llm_factory.create_chat_llm("openai", "gpt-4o-mini", "router", 0.3, True)
 transcriber_factory = TranscriberFactory(
@@ -91,6 +90,9 @@ def register_memory(identifier: str, force: bool = False) -> None:
 
 
 async def show_character_handler(update: Update, context: CallbackContext) -> None:
+    """
+    TODO: ONLY show MEMORY!!!
+    """
     global db, user_stats
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -145,7 +147,9 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
             output_string += "*System Prompt*:\n```\n" + system_prompt + "\n```"
 
         if memory:
-            output_string += "\n\n*Memory*:\n```\n" + memory + "\n```"
+            output_string = "*Memory*:\n```\n" + memory + "\n```"
+        else:
+            output_string = "It takes a while to build user profile. "
 
         await reply(message, output_string)
 
@@ -669,7 +673,9 @@ async def help_handler(update: Update, context: CallbackContext) -> None:
         if message is None:
             raise ValueError("Message is None.")
 
-    await message.reply_text(f"GitHub: {repo_path}")
+    await message.reply_text(
+        f"Thank you for trying out my project. You can find me at GitHub: {repo_path}"
+    )
 
 
 async def start_handler(update: Update, context: CallbackContext) -> None:
@@ -696,6 +702,7 @@ async def call_llm(llm, prompt, context, mode, response_format) -> list[dict]:
     MAX_RETRY = 5
     iteration = 0
     while iteration < MAX_RETRY:
+        logger.info("Attempt: %d", iteration)
         try:
             responses = await llm.run_async(
                 query=prompt, context=context, mode=mode, format=response_format
@@ -707,7 +714,7 @@ async def call_llm(llm, prompt, context, mode, response_format) -> list[dict]:
                 iteration += 1
             else:
                 logger.error("call_llm: ValueError: %s", ve)
-                raise
+                iteration += 1
         except Exception as e:
             logger.error("call_llm: Exception: %s", e)
             raise
@@ -907,11 +914,10 @@ async def photo_handler(update: Update, context: CallbackContext):
         response = responses[-1]
 
         content_string = response["content"]
-        umemory.push({"role": "assistant", "content": content_string})
 
         jresult = json.loads(content_string)
 
-        output_string = ""
+        output_string = f"Image Upload, interpreted by {model_name}:\n"
         # summary
         if "summary" in jresult:
             summary = jresult["summary"]
