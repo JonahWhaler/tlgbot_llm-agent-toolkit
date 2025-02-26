@@ -947,8 +947,24 @@ async def photo_handler(update: Update, context: CallbackContext):
                 kws = ", ".join(keywords)
                 output_string += f"**Keywords**\n[{kws}]"
 
-        if output_string == "":
-            raise RuntimeError("Content String is empty.")
+        if output_string == f"Image Upload, interpreted by {model_name}:\n":
+            logger.warning(
+                "Expected fields not found in the response: %s", content_string
+            )
+            output_string += jresult["text"]
+
+        umemory.push({"role": "user", "content": output_string})
+
+        await reply(message, output_string)
+
+        prompt = f"{output_string}"
+        if message.caption:
+            prompt += f"\nCaption={message.caption}"
+
+        prompt += "\nKeep it with you. Don't have to response/answer/comment. Chill!"
+        output_string, updated_memory = await call_chat_llm(uprofile, umemory, prompt)
+        updated_memory.push({"role": "assistant", "content": output_string})
+        chat_memory[identifier] = updated_memory
         await reply(message, output_string)
 
     logger.info("Released lock for user: %s", identifier)
