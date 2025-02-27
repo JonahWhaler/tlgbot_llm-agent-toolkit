@@ -46,9 +46,7 @@ user_stats: dict[str, tuple[bool, str]] = {}
 main_vdb: chromadb.ClientAPI = custom_library.ChromaDBFactory.get_instance(
     persist=True, persist_directory="/temp/vect"
 )
-web_db = storage.SQLite3_Storage(
-    "/db/ost.db", "web", False
-)  # TODO - Handle risk for race condition
+web_db = storage.WebCache(ttl=600, maxsize=128)
 llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
 agent_zero = llm_factory.create_chat_llm(
