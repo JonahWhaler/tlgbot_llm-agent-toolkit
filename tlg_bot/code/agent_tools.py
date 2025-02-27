@@ -20,10 +20,9 @@ from llm_agent_toolkit import (
 )
 from llm_agent_toolkit.tool import LazyTool
 from llm_agent_toolkit.memory import ChromaMemory
-from llm_agent_toolkit.core.local import Text_to_Text
-from llm_agent_toolkit import ChatCompletionConfig
+from llm_agent_toolkit import Core
 
-from storage import SQLite3_Storage
+from storage import WebCache
 
 import config
 
@@ -283,7 +282,8 @@ class KnowledgeBaseQueryTool(Tool):
 class DDGSmartSearchTool(Tool):
     def __init__(
         self,
-        cache_db: SQLite3_Storage,
+        llm: Core,
+        web_cache: WebCache,
         safesearch: str = "off",
         region: str = "my-en",
         pause: float = 1.0,
@@ -292,26 +292,8 @@ class DDGSmartSearchTool(Tool):
         self.safesearch = safesearch
         self.region = region
         self.pause = pause
-        self.cache_db = cache_db  # TODO - Handle risk for race condition
-
-        system_prompt = """Task: Summarize web page content, keep what is relevant to the {{Query}}.
-        Ensure your answers are grounded.
-        """
-        self.llm = Text_to_Text(
-            connection_string=os.environ["OLLAMA_HOST"],
-            system_prompt=system_prompt,
-            config=ChatCompletionConfig(
-                name="qwen2.5:7b",
-                return_n=1,
-                max_iteration=1,
-                max_tokens=16_000,
-                max_output_tokens=2048,
-                temperature=0.0,
-            ),
-            tools=None,
-        )
-        self.llm.context_length = 32_000
-        self.llm.max_output_tokens = 8192
+        self.web_cache = web_cache
+        self.llm = llm
 
     @staticmethod
     def function_info():
@@ -356,7 +338,7 @@ class DDGSmartSearchTool(Tool):
             "Cache-Control": "max-age=0",
         }
 
-    async def run_async(self, params: str) -> dict:
+    async def run_async(self, params: str) -> str:
         # Validate parameters
         if not self.validate(params=params):
             return {"error": "Invalid parameters for DuckDuckGoSearchAgent"}
@@ -366,44 +348,65 @@ class DDGSmartSearchTool(Tool):
         top_n = 5
 
         top_search = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(
-                keywords=query,
-                region=self.region,
-                safesearch=self.safesearch,
-                max_results=top_n,
-            ):
-                top_search.append(r)
-
         async with aiohttp.ClientSession() as session:
-            tasks = []
-            for r in top_search:
-                tasks.append(self.fetch_async(session, r["href"]))
+            with DDGS() as ddgs:
+                try:
+                    for _r in ddgs.text(
+                        keywords=query,
+                        region=self.region,
+                        safesearch=self.safesearch,
+                        max_results=top_n,
+                    ):
+                        challenge = f"{query}-{_r['href']}"
+                        cached_content = self.web_cache.get(challenge)
+                        if cached_content:
+                            _r["html"] = cached_content
+                            top_search.append(_r)
+                            continue
 
-            search_results = await asyncio.gather(*tasks)
-            for r, sr in zip(top_search, search_results):
-                if sr:
-                    if len(sr) < 1024:
-                        r["html"] = sr
-                    else:
-                        prompt = f"""Query: {query}
-                        Here is the web search result:
-                        ---
-                        * Page Title: {r['title']}
-                        * Page Body: {r['body']}
-                        * Page Content: {sr[:8_000]}
-                        ---
-                        """
-                        responses = await self.llm.run_async(query=prompt, context=None)
-                        response = responses[-1]
-                        summarized_content = response["content"]
-                        logger.info("Sumarized page content: %s", summarized_content)
-                        r["html"] = summarized_content
-                        
-        web_search_result = "\n\n".join([json.dumps(r) for r in top_search])
+                        page_html = await self.fetch_async(session, _r["href"])
+                        if page_html is None:
+                            top_search.append(_r)
+                            continue
+
+                        page_content_len = len(page_html)
+                        if page_content_len < 1024:
+                            summarized_content = page_html
+                        else:
+                            prompt = f"""Query: {query}
+                            Here is the web search result:
+                            ---
+                            * Page Title: {_r['title']}
+                            * Page Body: {_r['body']}
+                            * Page Content: {page_html[:8_000]}
+                            ---
+                            """
+                            try:
+                                responses = await self.llm.run_async(
+                                    query=prompt, context=None
+                                )
+                                summarized_content = responses[-1]["content"]
+                                # logger.info("$ Sumarized page content: %s", summarized_content)
+                            except Exception as error:
+                                logger.error(error, exc_info=True)
+                                summarized_content = "Not Available"
+
+                        # Store to cache
+                        self.web_cache.set(challenge, summarized_content)
+                        if summarized_content != "Not Available":
+                            _r["html"] = summarized_content
+
+                        top_search.append(_r)
+                except Exception as error:
+                    logger.error(error, exc_info=True)
+
+        if len(top_search) == 0:
+            return json.dumps({"error": ""}, ensure_ascii=False)
+
+        web_search_result = json.dumps(top_search, ensure_ascii=False)
         return web_search_result
 
-    def run(self, params: str) -> dict:
+    def run(self, params: str) -> str:
         # Validate parameters
         if not self.validate(params=params):
             return {"error": "Invalid parameters for DuckDuckGoSearchAgent"}
@@ -413,95 +416,117 @@ class DDGSmartSearchTool(Tool):
         top_n = 5
 
         top_search = []
-        with DDGS() as ddgs:
-            try:
-                for r in ddgs.text(
-                    keywords=query,
-                    region=self.region,
-                    safesearch=self.safesearch,
-                    max_results=top_n,
-                ):
-                    top_search.append(r)
-            except Exception as error:
-                logger.error(error)
+        with requests.Session() as session:
+            with DDGS() as ddgs:
+                try:
+                    for _r in ddgs.text(
+                        keywords=query,
+                        region=self.region,
+                        safesearch=self.safesearch,
+                        max_results=top_n,
+                    ):
+                        challenge = f"{query}-{_r['href']}"
+                        cached_content = self.web_cache.get(challenge)
+                        if cached_content:
+                            _r["html"] = cached_content
+                            top_search.append(_r)
+                            continue
 
-        for r in top_search:
-            page = self.fetch(url=r["href"])
-            if page:
-                page_content_len = len(page)
-                if page_content_len < 1024:
-                    r["html"] = page
-                else:
-                    prompt = f"""Query: {query}
-                    Here is the web search result:
-                    ---
-                    * Page Title: {r['title']}
-                    * Page Body: {r['body']}
-                    * Page Content: {page[:8_000]}
-                    ---
-                    """
-                    response = self.llm.run(query=prompt, context=None)[0]
-                    summarized_content = response["content"]
-                    logger.info("Sumarized page content: %s", summarized_content)
-                    r["html"] = summarized_content
+                        page_html = self.fetch(session=session, url=_r["href"])
+                        if page_html is None:
+                            top_search.append(_r)
+                            continue
 
-        web_search_result = "\n\n".join([json.dumps(r) for r in top_search])
+                        page_content_len = len(page_html)
+                        if page_content_len < 1024:
+                            summarized_content = page_html
+                        else:
+                            prompt = f"""Query: {query}
+                            Here is the web search result:
+                            ---
+                            * Page Title: {_r['title']}
+                            * Page Body: {_r['body']}
+                            * Page Content: {page_html[:8_000]}
+                            ---
+                            """
+                            try:
+                                responses = self.llm.run(query=prompt, context=None)
+                                summarized_content = responses[-1]["content"]
+                                # logger.info("$ Sumarized page content: %s", summarized_content)
+                            except Exception as error:
+                                logger.error(error, exc_info=True)
+                                summarized_content = "Not Available"
+
+                        # Store to cache
+                        self.web_cache.set(challenge, summarized_content)
+                        if summarized_content != "Not Available":
+                            _r["html"] = summarized_content
+
+                        top_search.append(_r)
+                except Exception as error:
+                    logger.error(error, exc_info=True)
+
+        if len(top_search) == 0:
+            return json.dumps({"error": ""}, ensure_ascii=False)
+
+        web_search_result = json.dumps(top_search, ensure_ascii=False)
         return web_search_result
 
-    async def fetch_async(self, session, url):
+    async def fetch_async(self, session: aiohttp.ClientSession, url: str) -> str | None:
         try:
-            # Load from cache
-            result = self.cache_db.get(url)
-            if result:
-                return result
-            
+            cached_content: str | None = self.web_cache.get(url)
+            if cached_content:
+                logger.info("Load from cache: %s", url)
+                return cached_content
+
             await asyncio.sleep(self.pause)
             async with session.get(url, headers=self.headers) as response:
                 data = await response.text()
                 soup = BeautifulSoup(data, "html.parser")
                 output_string = self.remove_whitespaces(soup.find("body").text)
                 # Store to cache
-                self.cache_db.set(url, output_string)
+                self.web_cache.set(url, output_string)
                 return output_string
         except Exception as _:
             return None
 
-    def fetch(self, url: str):
+    def fetch(self, session: requests.Session, url: str) -> str | None:
         try:
-            # Load from cache
-            result = self.cache_db.get(url)
-            if result:
-                return result
+            cached_content: str | None = self.web_cache.get(url)
+            if cached_content:
+                logger.info("Load from cache: %s", url)
+                return cached_content
 
-            page = requests.get(url=url, headers=self.headers, timeout=2, stream=False)
+            page = session.get(url=url, headers=self.headers, timeout=2, stream=False)
             soup = BeautifulSoup(page.text, "html.parser")
             body = soup.find("body")
             if body:
-                t = body.text
-                t = self.remove_whitespaces(t)
+                t = self.remove_whitespaces(body.text)
                 # Store to cache
-                self.cache_db.set(url, t)
+                self.web_cache.set(url, t)
                 return t
             return None
-        except Exception as _:
+        except Exception as e:
+            logger.error(e, exc_info=True)
             return None
 
     @staticmethod
     def remove_whitespaces(document_content: str) -> str:
-        original_len = len(document_content)
         cleaned_text = re.sub(r"\s+", " ", document_content)
         cleaned_text = re.sub(r"\n{3,}", "\n", cleaned_text)
-        updated_len = len(cleaned_text)
-        logger.info("Reduce from %d to %d", original_len, updated_len)
         return cleaned_text
 
 
 class ToolFactory:
-    def __init__(self, vdb: chromadb.ClientAPI, web_db: SQLite3_Storage):
+    def __init__(
+        self,
+        vdb: chromadb.ClientAPI,
+        web_db: WebCache,
+    ):
         self.vdb = vdb
-        self.web_db = web_db  # <-- Risk for Race Condition!!!
+        self.web_db = web_db
 
-    def get(self, tool_name: str) -> Tool | None:
+    def get(self, tool_name: str, llm: Core | None = None) -> Tool | None:
         if tool_name == "current_datetime":
             return LazyTool(function=current_datetime, is_coroutine_function=False)
         if tool_name == "duckduckgo_search":
@@ -512,5 +537,12 @@ class ToolFactory:
             logger.info("KnowledgeBaseQueryTool initialized.")
             return _tool
         if tool_name == "ddgsmart_search":
-            return DDGSmartSearchTool(cache_db=self.web_db)
+            if llm is None:
+                raise ValueError("LLM is required for DDGSmartSearchTool")
+
+            system_prompt = """Task: Summarize web page content, keep what is relevant to the {{Query}}.
+            Ensure your answers are grounded.
+            """
+            llm.system_prompt = system_prompt
+            return DDGSmartSearchTool(llm=llm, web_cache=self.web_db)
         return None
