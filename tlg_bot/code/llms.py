@@ -55,16 +55,6 @@ class LLMFactory:
 
         system_prompt = CHARACTER[character]["system_prompt"]
 
-        tools = CHARACTER[character].get("tools", None)
-        tool_list: list | None = None
-        if tools:
-            tool_list = []
-            for t in tools:
-                tool = self.tool_factory.get(tool_name=t)
-                if tool is None:
-                    raise ValueError(f"Requested tool not found. {t}")
-                tool_list.append(tool)
-
         llm: Core | None
         if platform == "ollama":
             if local.OllamaCore.csv_path is None:
@@ -77,6 +67,22 @@ class LLMFactory:
                     config=config,
                 )
             else:
+                tools = CHARACTER[character].get("tools", None)
+                tool_list: list | None = None
+                if tools:
+                    tool_list = []
+                    freeuse_llm = local.Text_to_Text(
+                        connection_string=OLLAMA_HOST,
+                        system_prompt=system_prompt,
+                        config=config,
+                        tools=None,
+                    )
+                    for t in tools:
+                        tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                        if tool is None:
+                            raise ValueError(f"Requested tool not found. {t}")
+                        tool_list.append(tool)
+
                 llm = local.Text_to_Text(
                     connection_string=OLLAMA_HOST,
                     system_prompt=system_prompt,
@@ -97,6 +103,19 @@ class LLMFactory:
                         system_prompt=system_prompt, config=config
                     )
                 else:
+                    tools = CHARACTER[character].get("tools", None)
+                    tool_list: list | None = None
+                    if tools:
+                        tool_list = []
+                        freeuse_llm = open_ai.Text_to_Text(
+                            system_prompt=system_prompt, config=config, tools=None
+                        )
+                        for t in tools:
+                            tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                            if tool is None:
+                                raise ValueError(f"Requested tool not found. {t}")
+                            tool_list.append(tool)
+
                     llm = open_ai.Text_to_Text(
                         system_prompt=system_prompt, config=config, tools=tool_list
                     )
@@ -115,6 +134,18 @@ class LLMFactory:
                     system_prompt=system_prompt, config=config
                 )
             else:
+                tools = CHARACTER[character].get("tools", None)
+                tool_list: list | None = None
+                if tools:
+                    tool_list = []
+                    freeuse_llm = deep_seek.Text_to_Text(
+                        system_prompt=system_prompt, config=config, tools=None
+                    )
+                    for t in tools:
+                        tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                        if tool is None:
+                            raise ValueError(f"Requested tool not found. {t}")
+                        tool_list.append(tool)
                 llm = deep_seek.Text_to_Text(
                     system_prompt=system_prompt, config=config, tools=tool_list
                 )
