@@ -3,6 +3,8 @@ import os
 import re
 import sqlite3
 import csv
+import time
+import threading
 from typing import Any
 from abc import ABC, abstractmethod
 
@@ -262,6 +264,59 @@ class SQLite3_Storage(Storage):
             raise e
         finally:
             conn.close()
+
+
+class WebCache:
+    def __init__(self, ttl: int = 300, maxsize: int = 128):
+        self.mem: dict[str, tuple[float, Any]] = {}
+        self.lock = threading.Lock()
+        self.ttl = ttl
+        self.maxsize = maxsize
+
+    def get(self, url: str) -> None | Any:
+        with self.lock:
+            now_second = time.time()
+            data_tuple: tuple[float, Any] | None = self.mem.get(url, None)
+
+            if data_tuple is None:
+                return None
+
+            create_second, data_dict = data_tuple
+            if now_second - create_second > self.ttl:
+                return None
+
+            self.mem[url] = (now_second, data_dict)
+            self.__checkout()
+            return data_dict
+
+    def set(self, url: str, data_dict: Any):
+        with self.lock:
+            now_second = time.time()
+            self.mem[url] = (now_second, data_dict)
+            self.__checkout()
+
+    def __checkout(self) -> None:
+        now_second = time.time()
+        expired_url: list[str] = []
+        for url, dtuple in self.mem.items():
+            create_second, _ = dtuple
+            if now_second - create_second > self.ttl:
+                expired_url.append(url)
+        for url in expired_url:
+            self.mem.pop(url)
+
+        expecting_to_remove_num = len(list(self.mem.keys())) - self.maxsize
+        if expecting_to_remove_num > 0:
+            score_list: list[tuple[str, float]] = []
+            for url, dtuple in self.mem.items():
+                create_second, _ = dtuple
+                score_list.append((url, now_second - create_second))
+
+            while expecting_to_remove_num > 0:
+                url, sec = max(score_list, key=lambda x: x[1])
+                score_list.remove((url, sec))
+                self.mem.pop(url)
+                expecting_to_remove_num -= 1
 
 
 # END
