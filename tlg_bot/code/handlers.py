@@ -735,7 +735,7 @@ async def call_ii(
             )
             return responses
         except ValueError as ve:
-            if str(ve) == "max_output_tokens <= 0":
+            if context and str(ve) == "max_output_tokens <= 0":
                 context = context[1:]
                 iteration += 1
             else:
