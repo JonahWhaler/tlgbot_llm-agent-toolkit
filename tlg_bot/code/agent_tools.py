@@ -294,6 +294,9 @@ class DDGSmartSearchTool(Tool):
         self.pause = pause
         self.web_cache = web_cache
         self.llm = llm
+        self.system_prompt = """Task: Summarize web page content, keep what is relevant to the {{Query}}.
+        Ensure your answers are grounded.
+        """
 
     @staticmethod
     def function_info():
@@ -339,6 +342,7 @@ class DDGSmartSearchTool(Tool):
         }
 
     async def run_async(self, params: str) -> str:
+
         # Validate parameters
         if not self.validate(params=params):
             return {"error": "Invalid parameters for DuckDuckGoSearchAgent"}
@@ -383,7 +387,13 @@ class DDGSmartSearchTool(Tool):
                             """
                             try:
                                 responses = await self.llm.run_async(
-                                    query=prompt, context=None
+                                    query=prompt,
+                                    context=[
+                                        {
+                                            "role": "system",
+                                            "content": self.system_prompt,
+                                        }
+                                    ],
                                 )
                                 summarized_content = responses[-1]["content"]
                                 # logger.info("$ Sumarized page content: %s", summarized_content)
@@ -450,7 +460,15 @@ class DDGSmartSearchTool(Tool):
                             ---
                             """
                             try:
-                                responses = self.llm.run(query=prompt, context=None)
+                                responses = self.llm.run(
+                                    query=prompt,
+                                    context=[
+                                        {
+                                            "role": "system",
+                                            "content": self.system_prompt,
+                                        }
+                                    ],
+                                )
                                 summarized_content = responses[-1]["content"]
                                 # logger.info("$ Sumarized page content: %s", summarized_content)
                             except Exception as error:
@@ -539,10 +557,5 @@ class ToolFactory:
         if tool_name == "ddgsmart_search":
             if llm is None:
                 raise ValueError("LLM is required for DDGSmartSearchTool")
-
-            system_prompt = """Task: Summarize web page content, keep what is relevant to the {{Query}}.
-            Ensure your answers are grounded.
-            """
-            llm.system_prompt = system_prompt
             return DDGSmartSearchTool(llm=llm, web_cache=self.web_db)
         return None

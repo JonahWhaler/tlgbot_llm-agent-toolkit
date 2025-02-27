@@ -73,7 +73,7 @@ class LLMFactory:
                     tool_list = []
                     freeuse_llm = local.Text_to_Text(
                         connection_string=OLLAMA_HOST,
-                        system_prompt=system_prompt,
+                        system_prompt="You are a helpful assistant.",
                         config=config,
                         tools=None,
                     )
@@ -108,7 +108,9 @@ class LLMFactory:
                     if tools:
                         tool_list = []
                         freeuse_llm = open_ai.Text_to_Text(
-                            system_prompt=system_prompt, config=config, tools=None
+                            system_prompt="You are a helpful assistant.",
+                            config=config,
+                            tools=None,
                         )
                         for t in tools:
                             tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
@@ -139,7 +141,9 @@ class LLMFactory:
                 if tools:
                     tool_list = []
                     freeuse_llm = deep_seek.Text_to_Text(
-                        system_prompt=system_prompt, config=config, tools=None
+                        system_prompt="You are a helpful assistant.",
+                        config=config,
+                        tools=None,
                     )
                     for t in tools:
                         tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
