@@ -1,4 +1,4 @@
-llm-agent-toolkit[transcriber,all]==0.0.30.1
+llm-agent-toolkit[all]==0.0.30.4.3
 python-telegram-bot[rate-limiter]==21.10
 pygrl
 duckduckgo_search==7.2.1
