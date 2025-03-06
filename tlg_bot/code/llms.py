@@ -14,8 +14,8 @@ import chromadb
 
 from agent_tools import ToolFactory
 
-from storage import WebCache
-from config import PARAMETER, PROVIDER, OLLAMA_HOST, CHARACTER
+from mystorage import WebCache
+from myconfig import PARAMETER, PROVIDER, OLLAMA_HOST, CHARACTER
 
 logger = logging.getLogger(__name__)
 

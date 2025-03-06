@@ -22,9 +22,8 @@ from llm_agent_toolkit.tool import LazyTool
 from llm_agent_toolkit.memory import ChromaMemory
 from llm_agent_toolkit import Core
 
-from storage import WebCache
-
-import config
+from mystorage import WebCache
+import myconfig
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +202,7 @@ class KnowledgeBaseQueryTool(Tool):
             logger.error("Error creating knowledge base: %s", e)
         finally:
             encoder = llm_agent_toolkit.encoder.OllamaEncoder(
-                connection_string=config.OLLAMA_HOST, model_name="bge-m3:latest"
+                connection_string=myconfig.OLLAMA_HOST, model_name="bge-m3:latest"
             )
             # choice of chunker is not important
             # query does not need to be chunked
@@ -217,7 +216,7 @@ class KnowledgeBaseQueryTool(Tool):
 
     def init(self, vdb, title):
         encoder = llm_agent_toolkit.encoder.OllamaEncoder(
-            connection_string=config.OLLAMA_HOST, model_name="bge-m3:latest"
+            connection_string=myconfig.OLLAMA_HOST, model_name="bge-m3:latest"
         )
         for file_name in os.listdir(f"/assets/{title}"):
             file_path = f"/assets/{title}/{file_name}"
@@ -386,7 +385,8 @@ class DDGSmartSearchTool(Tool):
                             ---
                             """
                             try:
-                                responses = await self.llm.run_async(
+                                # TODO: Propagate usage to caller!
+                                responses, usage = await self.llm.run_async(
                                     query=prompt,
                                     context=[
                                         {
@@ -460,7 +460,8 @@ class DDGSmartSearchTool(Tool):
                             ---
                             """
                             try:
-                                responses = self.llm.run(
+                                # TODO: Propagate usage to caller!
+                                responses, usage = self.llm.run(
                                     query=prompt,
                                     context=[
                                         {

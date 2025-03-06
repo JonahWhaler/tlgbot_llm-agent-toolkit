@@ -17,15 +17,7 @@ from telegram.ext import (
 )
 import telegram.ext
 import handlers
-import config
-
-logging.basicConfig(
-    filename="/log/tlg_bot.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    datefmt="%d-%b-%y %H:%M:%S",
-)
-logging.getLogger("httpx").setLevel(logging.WARN)
+import myconfig
 
 
 def run_bot(bot: Application) -> None:
