@@ -6,7 +6,9 @@ with open("/config/provider.yaml", "r", encoding="utf-8") as model_file:
     PROVIDER: dict[str, dict] = yaml.safe_load(model_file)
 
 DEFAULT_T2T_MODEL = ("openai", "gpt-4o-mini")
-DEFAULT_I2T_MODEL = ("ollama", "llava:7b")
+# DEFAULT_T2T_MODEL = ("ollama", "qwen2.5:3b")
+DEFAULT_I2T_MODEL = ("openai", "gpt-4o-mini")
+# DEFAULT_I2T_MODEL = ("ollama", "llava:13b")
 
 with open("/config/parameter.yaml", "r", encoding="utf-8") as parameter_file:
     PARAMETER: dict[str, dict] = yaml.safe_load(parameter_file)
