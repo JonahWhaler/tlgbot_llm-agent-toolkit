@@ -39,31 +39,36 @@ def handle_triple_ticks(text: str, closed: bool):
     return t, close
 
 
-def escape_markdown(text) -> str:
+def escape_markdown_extended(text) -> str:
     """
     Escape special characters for Telegram's HTMLV2.
     """
     # Characters that need to be escaped
-    special_chars = [
-        # "_",
-        # "*",
-        "[",
-        "]",
-        "(",
-        ")",
-        # "~",
-        # "`",
-        ">",
-        # "#",
-        "+",
-        "-",
-        "=",
-        "|",
-        "{",
-        "}",
-        ".",
-        "!",
-    ]
+    # special_chars = [
+    #     "_",
+    #     "*",
+    #     "[",
+    #     "]",
+    #     "(",
+    #     ")",
+    #     "~",
+    #     "`",
+    #     ">",
+    #     "#",
+    #     "+",
+    #     "-",
+    #     "=",
+    #     "|",
+    #     "{",
+    #     "}",
+    #     ".",
+    #     "!",
+    # ]
+    special_chars = ["-"]
+    if "```" in text:
+        _text = escape_markdown(text, 2, "code")
+    else:
+        _text = escape_markdown(text, 2)
 
     # Escape backslash first to avoid double escaping
     # text = text.replace("\\", "\\\\")
@@ -73,8 +78,8 @@ def escape_markdown(text) -> str:
         _text = _text.replace(char, f"\\{char}")
 
     # _text = re.sub(r"#{1,} (.*?)\n", r"*\1*\n", _text)
-    _text = re.sub(r"#{2,}", "", _text)
-    _text = _text.replace("#", r"\#")
+    # _text = re.sub(r"#{2,}", "", _text)
+    # _text = _text.replace("#", r"\#")
 
     # logger.info("Raw Markdown: %s", text)
     # logger.info("Escaped Markdown: %s", _text)
