@@ -101,25 +101,17 @@ def escape_html(text) -> str:
     trap_pattern = re.compile(r"^#{2,} ([\w\d\s:./-]+)(?:\n|$)", re.MULTILINE)
     _text = trap_pattern.sub(lambda m: f"<b>{m.group(1)}</b>\n", _text)
 
-    bold_tag = "<b>"
     while True:
-        if "**" in _text:
-            _text = _text.replace("**", bold_tag, 1)
-            if bold_tag == "<b>":
-                bold_tag = "</b>"
-            else:
-                bold_tag = "<b>"
+        if "**" in _text and len(_text.split("**")) > 2:
+            _text = _text.replace("**", "<b>", 1)
+            _text = _text.replace("**", "</b>", 1)
         else:
             break
 
-    italic_tag = "<i>"
     while True:
-        if "*" in _text:
-            _text = _text.replace("*", italic_tag, 1)
-            if italic_tag == "<i>":
-                italic_tag = "</i>"
-            else:
-                italic_tag = "<i>"
+        if "*" in _text and len(_text.split("*")) > 2:
+            _text = _text.replace("*", "<i>", 1)
+            _text = _text.replace("*", "</i>", 1)
         else:
             break
 
