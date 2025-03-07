@@ -385,7 +385,6 @@ class DDGSmartSearchTool(Tool):
                             ---
                             """
                             try:
-                                # TODO: Propagate usage to caller!
                                 responses, usage = await self.llm.run_async(
                                     query=prompt,
                                     context=[
@@ -396,6 +395,7 @@ class DDGSmartSearchTool(Tool):
                                     ],
                                 )
                                 summarized_content = responses[-1]["content"]
+                                self.token_usage = self.token_usage + usage
                                 # logger.info("$ Sumarized page content: %s", summarized_content)
                             except Exception as error:
                                 logger.error(error, exc_info=True)
@@ -460,7 +460,6 @@ class DDGSmartSearchTool(Tool):
                             ---
                             """
                             try:
-                                # TODO: Propagate usage to caller!
                                 responses, usage = self.llm.run(
                                     query=prompt,
                                     context=[
@@ -471,6 +470,7 @@ class DDGSmartSearchTool(Tool):
                                     ],
                                 )
                                 summarized_content = responses[-1]["content"]
+                                self.token_usage = self.token_usage + usage
                                 # logger.info("$ Sumarized page content: %s", summarized_content)
                             except Exception as error:
                                 logger.error(error, exc_info=True)
