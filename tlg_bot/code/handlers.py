@@ -235,8 +235,7 @@ def get_user_lock(identifier: str) -> Lock:
 async def reply(
     message: telegram.Message, output_string: str
 ) -> telegram.Message | None:
-    from custom_library import escape_html
-    from telegram.helpers import escape_markdown
+    from custom_library import escape_html, escape_markdown_extended
 
     if myconfig.DEBUG == "1":
         logger.info(">> %s", output_string)
@@ -260,7 +259,7 @@ async def reply(
                     raise
 
                 logger.warning("Fallback to MARKDOWN_V2 mode.")
-                formatted_chunk = escape_markdown(current_chunk, 2, "code")
+                formatted_chunk = escape_markdown_extended(current_chunk)
                 # formatted_chunk, is_close = handle_triple_ticks(formatted_chunk, is_close)
                 msg = await message.reply_text(
                     formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
@@ -280,7 +279,7 @@ async def reply(
                 raise
 
             logger.warning("Fallback to MARKDOWN_V2 mode.")
-            formatted_chunk = escape_markdown(current_chunk, 2, "code")
+            formatted_chunk = escape_markdown_extended(current_chunk)
             # formatted_chunk, _ = handle_triple_ticks(formatted_chunk, is_close)
             msg = await message.reply_text(
                 formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
