@@ -287,34 +287,6 @@ async def reply(
     return msg
 
 
-class Counter:
-    def __init__(self):
-        self.usage = 0
-
-    def increment(self):
-        self.usage += 1
-
-    def get(self):
-        return self.usage
-
-
-x = """
-Update(
-    channel_post=Message(
-        channel_chat_created=False, 
-        chat=Chat(id=-1002303276058, title='JW', type=<ChatType.CHANNEL>, username='whaler_bot_dev'), 
-        date=datetime.datetime(2025, 3, 6, 8, 39, tzinfo=datetime.timezone.utc), 
-        delete_chat_photo=False, 
-        group_chat_created=False, 
-        message_id=2, 
-        sender_chat=Chat(id=-1002303276058, title='JW', type=<ChatType.CHANNEL>, username='whaler_bot_dev'), 
-        supergroup_chat_created=False, text='pop'
-    ), 
-    update_id=465202143
-)
-"""
-
-
 async def middleware_function(update: Update, context: CallbackContext) -> None:
     """
     Intercepts messages
