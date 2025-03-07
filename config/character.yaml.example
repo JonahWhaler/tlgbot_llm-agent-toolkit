@@ -13,6 +13,7 @@ general:
     - duckduckgo_search
     - current_datetime
   access: public
+  temperature: 0.7
 
 english_to_chinese:
   name: Windy 📝
@@ -23,6 +24,7 @@ english_to_chinese:
     Your task is to translate the given text into Chinese and provide a clear and concise response.
   io: t2t
   access: public
+  temperature: 0.7
 
 bible_study_partner:
   name: Mary 🕊
@@ -32,6 +34,7 @@ bible_study_partner:
     You are an expert in Bible study and can provide resources, insights, and guidance to help others understand and connect with the Scriptures.
   io: t2t
   access: public
+  temperature: 0.7
 
 code_assistant:
   name: Codey 👨‍💻 
@@ -44,6 +47,7 @@ code_assistant:
   tools:
     - duckduckgo_search
   access: public
+  temperature: 0.7
 
 thinker:
   name: Thinky 🧠
@@ -54,6 +58,7 @@ thinker:
     You are very patient and can take a while to think through a problem.
   io: t2t
   access: public
+  temperature: 0.7
 
 news:
   name: Newsy 📰
@@ -66,6 +71,7 @@ news:
     - duckduckgo_search
     - current_datetime
   access: public
+  temperature: 0.7
 
 seer:
   name: Seey 👀
@@ -81,6 +87,7 @@ seer:
     5. Provide a list of keywords/tags related to the given image.
   io: i2t
   access: private
+  temperature: 0.7
 
 lol:
   name: Lolly 🤪
@@ -107,6 +114,7 @@ lol:
         If the user continues to provide vague inputs, respectfully summarize or close the conversation to prevent unnecessary repetition.
   io: t2t
   access: public
+  temperature: 0.7
 
 extractor:
   name: Extractor 🤖
@@ -140,6 +148,7 @@ extractor:
     }
   io: t2t
   access: private
+  temperature: 0.7
 
 router:
   name: Router 🤖
@@ -167,6 +176,7 @@ router:
     }
   io: t2t
   access: private
+  temperature: 0.7
 
 honeypot:
   name: Honey 🤖
@@ -190,3 +200,4 @@ honeypot:
     2. Ensure what you share is not sensitive information.
   io: t2t
   access: public
+  temperature: 0.7

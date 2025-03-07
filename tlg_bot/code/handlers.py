@@ -41,45 +41,45 @@ import myconfig
 logger = logging.getLogger(__name__)
 
 # Global Variables
-chat_memory: dict[str, ShortTermMemory] = {}
-user_locks: dict[str, Lock] = {}
-db = SQLite3_Storage("/db/ost.db", "user_profile", False)
+chat_memory: dict[str, ShortTermMemory] = {}  # Cleanup mechanism is needed!
+user_locks: dict[str, Lock] = {}  # Cleanup mechanism is needed!
+
 
 rl_storage = BasicStorage()
 rate_limiter = grl(rl_storage, 1, 1, 100)
-user_stats: dict[str, tuple[bool, str]] = {}
+user_stats: dict[str, tuple[bool, str]] = {}  # Cleanup mechanism is needed!
 
 main_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
     persist=True, persist_directory="/temp/vect"
 )
 web_db = WebCache(ttl=600, maxsize=128)
 llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
-transcriber_factory = TranscriberFactory(
-    provider="local",
-    model_name="turbo",
-    output_directory="/temp",
-    audio_parameter=None,
-)
 
 
-def register_user(identifier: str, force: bool = False) -> None:
-    global db
-    uprofile = db.get(identifier)
+def register_user(
+    identifier: str, username: str, force: bool = False, premium: bool = False
+) -> None:
+    user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+    uprofile = user_sql3_table.get(identifier)
     if uprofile is None or force:
-        pt2t, mt2t = myconfig.DEFAULT_T2T_MODEL
-        pi2t, mi2t = myconfig.DEFAULT_I2T_MODEL
-        db.set(
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        cc_row = sys_sql3_table.get("chat-completion")
+        # assert cc_row is not None
+        ii_row = sys_sql3_table.get("image-interpretation")
+        # assert ii_row is not None
+        user_sql3_table.set(
             identifier,
             {
-                "platform_t2t": pt2t,
-                "model_t2t": mt2t,
-                "platform_i2t": pi2t,
-                "model_i2t": mi2t,
+                "username": username,
+                "platform_t2t": cc_row["provider"],
+                "model_t2t": cc_row["model_name"],
+                "platform_i2t": ii_row["provider"],
+                "model_i2t": ii_row["model_name"],
                 "character": myconfig.DEFAULT_CHARACTER,
-                "creativity": 0.7,
                 "memory": None,
                 "auto_routing": True,
                 "usage": {"openai": 0, "ollama": 0, "gemini": 0, "deepseek": 0},
+                "status": "active" if premium else "inactive",
             },
         )
 
@@ -96,7 +96,11 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
     """
     TODO: ONLY show MEMORY!!!
     """
-    global db, user_stats
+    global user_stats
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
         return None
@@ -110,10 +114,10 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
         allowed_to_pass, _msg = user_stats[identifier]
         if not allowed_to_pass:
             await reply(message, _msg)
-            logger.info("Released lock for user: %s", identifier)
             return
 
-        uprofile = db.get(identifier)
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
         assert uprofile is not None
 
         memory = uprofile["memory"]
@@ -127,8 +131,11 @@ async def show_character_handler(update: Update, context: CallbackContext) -> No
     logger.info("Released lock for user: %s", identifier)
 
 
-async def show_model_menu(update: Update, context: CallbackContext) -> None:
+async def show_chat_model_menu(update: Update, context: CallbackContext) -> None:
     global user_stats
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -147,7 +154,7 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
             logger.info("Released lock for user: %s", identifier)
             return
 
-        output_string = "Click to select a model:\n"
+        output_string = "Click to select a chat model:\n"
 
         keyboard = []
         providers = list(myconfig.PROVIDER.keys())
@@ -158,7 +165,8 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
                 keyboard.append(
                     [
                         telegram.InlineKeyboardButton(
-                            name, callback_data=f"set_model|{provider}$$${model_name}"
+                            name,
+                            callback_data=f"set_chat_model|{provider}$$${model_name}",
                         )
                     ]
                 )
@@ -169,8 +177,60 @@ async def show_model_menu(update: Update, context: CallbackContext) -> None:
         )
 
 
-async def set_model_handler(update: Update, context: CallbackContext) -> None:
-    global db, user_stats
+async def show_vision_model_menu(update: Update, context: CallbackContext) -> None:
+    global user_stats
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_user_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
+        output_string = "Click to select a vision model:\n"
+
+        keyboard = []
+        providers = list(myconfig.PROVIDER.keys())
+        for provider in providers:
+            if "i2t" not in myconfig.PROVIDER[provider]:
+                continue
+
+            models = list(myconfig.PROVIDER[provider]["i2t"])
+            for model_name in models:
+                name = f"{provider} - {model_name}"
+                keyboard.append(
+                    [
+                        telegram.InlineKeyboardButton(
+                            name,
+                            callback_data=f"set_vision_model|{provider}$$${model_name}",
+                        )
+                    ]
+                )
+
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+        await message.reply_text(
+            output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+        )
+
+
+async def set_chat_model_handler(update: Update, context: CallbackContext) -> None:
+    global user_stats
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
     callback_query = update.callback_query
 
@@ -200,16 +260,68 @@ async def set_model_handler(update: Update, context: CallbackContext) -> None:
 
         provider_model = query.data.split("|")[1]
         provider, model_name = provider_model.split("$$$")
-        uprofile = db.get(identifier)
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
         assert uprofile is not None
         uprofile["platform_t2t"] = provider
         uprofile["model_t2t"] = model_name
 
-        db.set(identifier, uprofile)
+        user_sql3_table.set(identifier, uprofile)
 
         await context.bot.send_message(
             chat_id=message.chat.id,
-            text=f"Chat Completion set to {provider} - {model_name}",
+            text=f"Chat Completion model set to {provider} - {model_name}",
+            parse_mode=ParseMode.HTML,
+        )
+
+    logger.info("Released lock for user: %s", identifier)
+
+
+async def set_vision_model_handler(update: Update, context: CallbackContext) -> None:
+    global user_stats
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    callback_query = update.callback_query
+
+    if callback_query is None:
+        raise ValueError("Callback query is None.")
+
+    message = callback_query.message
+
+    if message is None:
+        raise ValueError("Message is None.")
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_user_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
+        query = update.callback_query
+        await query.answer()
+
+        provider_model = query.data.split("|")[1]
+        provider, model_name = provider_model.split("$$$")
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
+        assert uprofile is not None
+        uprofile["platform_i2t"] = provider
+        uprofile["model_i2t"] = model_name
+
+        user_sql3_table.set(identifier, uprofile)
+
+        await context.bot.send_message(
+            chat_id=message.chat.id,
+            text=f"Vision Interpretation model set to {provider} - {model_name}",
             parse_mode=ParseMode.HTML,
         )
 
@@ -291,15 +403,14 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
     """
     Intercepts messages
     """
-    global chat_memory, rate_limiter, db, user_stats, llm_factory, transcriber_factory
+    global chat_memory, rate_limiter, user_stats, llm_factory
     # logger = logging.getLogger(__name__)
     logger.info("Middleware => Update: %s", update)
     # Filter out Non-user updates
     channel_post = getattr(update, "channel_post", None)
     if channel_post:
-        chat_id = channel_post.chat.id
         await context.bot.send_message(
-            chat_id=chat_id, text="This bot does not support `Channel`."
+            chat_id=channel_post.chat.id, text="This bot does not support `Channel`."
         )
         return None
 
@@ -308,18 +419,6 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         return None
 
     identifier: str = format_identifier(message.chat.id)
-
-    user_data = getattr(context, "user_data", None)
-    if user_data is None:
-        logger.warning(">> %s", update)
-        context.chat_data.setdefault(identifier, "BLOCKED")
-        raise RuntimeError("Non-user updates")
-    # user_stats: dict[str, tuple[bool, str]] = context.bot_data.get("user_stats")
-    if message.chat.id not in myconfig.PREMIUM_MEMBERS:
-        logger.warning("Unauthorized Access: %d", message.chat.id)
-        user_stats[identifier] = (False, "Unauthorized Access")
-        return
-
     ulock = get_user_lock(identifier)
     if ulock.locked():
         await message.reply_text("Previous request is still running.")
@@ -333,18 +432,51 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         if not allowed_to_pass:
             return
 
-        register_user(identifier)
-        register_memory(identifier)
         token_usage = None
-        agent_zero = llm_factory.create_chat_llm(
-            *myconfig.DEFAULT_T2T_MODEL, "extractor", 0.3, False
-        )
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        user_profile = user_sql3_table.get(identifier)
+        logger.warning("Profile: %s", user_profile)
+        logger.warning("Context: %s", context.user_data)
+        if user_profile is None:
+            if message.chat.id not in myconfig.PREMIUM_MEMBERS:
+                register_memory(identifier, force=False)
+                register_user(
+                    identifier, message.from_user.name, force=True, premium=False
+                )
+                logger.warning("Unauthorized Access: %d", message.chat.id)
+                context.user_data["access"] = "Unauthorized Access"
+                await context.bot.send_message(
+                    chat_id=message.chat.id, text="Unauthorized Access."
+                )
+                return
+
+            register_memory(identifier, force=False)
+            register_user(identifier, message.from_user.name, force=False, premium=True)
+        elif (
+            user_profile["status"] == "active"
+            and context.user_data["access"] == "Unauthorized Access"
+        ):
+            context.user_data["access"] = "Granted"
+
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         if message.text:
             if not message.text.startswith("/"):
+                cc_row = sys_sql3_table.get("chat-completion")
+                assert cc_row is not None
+                agent_zero = llm_factory.create_chat_llm(
+                    cc_row["provider"], cc_row["model_name"], "extractor", True
+                )
                 token_usage = await update_memory(
-                    agent_zero, chat_memory, db, identifier, message.text
+                    agent_zero, chat_memory, user_sql3_table, identifier, message.text
                 )
         elif message.voice or message.audio:
+            t_row = sys_sql3_table.get("transcription")
+            transcriber_factory = TranscriberFactory(
+                provider=t_row["provider"],
+                model_name=t_row["model_name"],
+                output_directory="/temp",
+                audio_parameter=None,
+            )
             transcript, txt_path = await process_audio_input(
                 message=message,
                 context=context,
@@ -356,8 +488,13 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                 prefix = "Audio Upload" if message.audio else "Voice Input"
                 content = f"{prefix}:\n{transcript}"
                 logger.info("Add %s to memory.", content)
+                cc_row = sys_sql3_table.get("chat-completion")
+                assert cc_row is not None
+                agent_zero = llm_factory.create_chat_llm(
+                    cc_row["provider"], cc_row["model_name"], "extractor", True
+                )
                 token_usage = await update_memory(
-                    agent_zero, chat_memory, db, identifier, content
+                    agent_zero, chat_memory, user_sql3_table, identifier, content
                 )
                 await reply(message, f"**Whisper 🎤**:\n{transcript}")
 
@@ -370,11 +507,11 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                 )
 
         if token_usage:
-            uprofile = db.get(identifier)
+            uprofile = user_sql3_table.get(identifier)
             assert uprofile is not None
             default_provider, _ = myconfig.DEFAULT_T2T_MODEL
             uprofile["usage"][default_provider] += token_usage.total_tokens
-            db.set(identifier, uprofile)
+            user_sql3_table.set(identifier, uprofile)
 
 
 async def help_handler(update: Update, context: CallbackContext) -> None:
@@ -383,11 +520,7 @@ async def help_handler(update: Update, context: CallbackContext) -> None:
     if message is None:
         return None
 
-    identifier = format_identifier(message.chat.id)
-    status = context.chat_data.get(identifier, None)
-    if status:
-        logger.warning("%s => %s", identifier, status)
-
+    # identifier = format_identifier(message.chat.id)
     await message.reply_text(
         f"Thank you for trying out my project. You can find me at GitHub: {repo_path}"
     )
@@ -467,9 +600,7 @@ async def call_chat_llm(
 
     auto_routing = profile["auto_routing"]
     if auto_routing:
-        agent_router = llm_factory.create_chat_llm(
-            *myconfig.DEFAULT_T2T_MODEL, "router", 0.3, True
-        )
+        agent_router = llm_factory.create_chat_llm(platform, model_name, "router", True)
         tlg_msg = await tlg_msg.edit_text(
             "<b>Progress</b>: <i>ROUTING</i>", parse_mode=ParseMode.HTML
         )
@@ -480,9 +611,7 @@ async def call_chat_llm(
         )
         profile["usage"][platform] += find_best_agent_usage.total_tokens
 
-    llm = llm_factory.create_chat_llm(
-        platform, model_name, character, profile["creativity"]
-    )
+    llm = llm_factory.create_chat_llm(platform, model_name, character)
     tlg_msg = await tlg_msg.edit_text(
         "<b>Progress</b>: <i>GENERATING</i>", parse_mode=ParseMode.HTML
     )
@@ -518,8 +647,8 @@ async def redirect(
         await start_handler(update, context)
     elif prompt.startswith("/usage"):
         await show_usage(update, context)
-    elif prompt.startswith("/model"):
-        await show_model_menu(update, context)
+    elif prompt.startswith("/chat_model"):
+        await show_chat_model_menu(update, context)
     elif prompt.startswith("/mycharacter"):
         await show_character_handler(update, context)
     elif prompt.startswith("/new"):
@@ -532,8 +661,10 @@ async def redirect(
 
 
 async def message_handler(update: Update, context: CallbackContext) -> None:
-    global chat_memory, user_locks, db, user_stats
+    global chat_memory, user_locks, user_stats
 
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
     # We can consider to redirect these requests
     # Temporary turn off
     # channel_post = getattr(update, "channel_post", None)
@@ -568,13 +699,14 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         if umemory is None:
             raise ValueError("Memory is None.")
 
-        uprofile = db.get(identifier)
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
         assert uprofile is not None
 
         output_string, updated_memory, updated_profile = await call_chat_llm(
             uprofile, umemory, prompt, tlg_msg
         )
-        db.set(identifier, updated_profile)
+        user_sql3_table.set(identifier, updated_profile)
         chat_memory[identifier] = updated_memory
         await reply(message, output_string)
 
@@ -595,7 +727,10 @@ def generate_unique_filename(seed: str, extension: str, deterministic: bool = Fa
 
 
 async def photo_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, db, user_stats
+    global chat_memory, user_locks, user_stats
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -638,7 +773,8 @@ async def photo_handler(update: Update, context: CallbackContext):
 
         umemory.push({"role": "user", "content": prompt})
 
-        uprofile = db.get(identifier)
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
         assert uprofile is not None
 
         ii_resp_tuple = await ii_pipeline(uprofile, prompt, export_path, llm_factory)
@@ -656,7 +792,7 @@ async def photo_handler(update: Update, context: CallbackContext):
         response_tuple = await call_chat_llm(updated_profile, umemory, prompt, tlg_msg)
         output_string, updated_memory, updated_profile = response_tuple
         # Leaving
-        db.set(identifier, updated_profile)
+        user_sql3_table.set(identifier, updated_profile)
         updated_memory.push({"role": "assistant", "content": output_string})
         chat_memory[identifier] = updated_memory
         await reply(message, output_string)
@@ -665,6 +801,8 @@ async def photo_handler(update: Update, context: CallbackContext):
 
 async def reset_chatmemory_handler(update: Update, context: CallbackContext):
     global chat_memory, user_locks, user_stats
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -693,6 +831,8 @@ async def reset_chatmemory_handler(update: Update, context: CallbackContext):
 
 async def reset_user_handler(update: Update, context: CallbackContext):
     global user_locks, user_stats
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -710,7 +850,7 @@ async def reset_user_handler(update: Update, context: CallbackContext):
             return
 
         register_memory(identifier, force=True)
-        register_user(identifier, force=True)
+        register_user(identifier, message.from_user.name, force=True)
         await message.reply_text("User has been reset.")
     logger.info("Released lock for user: %s", identifier)
 
@@ -721,7 +861,9 @@ class CompressContent(BaseModel):
 
 
 async def compress_memory_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, db, user_stats
+    global chat_memory, user_locks, user_stats
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -761,18 +903,19 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
         context = context[:-1]
         prompt = "Compress the past conversations."
 
-        uprofile = db.get(identifier)
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
         assert uprofile is not None
 
         platform = uprofile["platform_t2t"]
         model_name = uprofile["model_t2t"]
-        llm = llm_factory.create_chat_llm(platform, model_name, "general", 0.0)
+        llm = llm_factory.create_chat_llm(platform, model_name, "general")
 
         responses, usage = await call_llm(
             llm, prompt, context, ResponseMode.DEFAULT, None
         )
         uprofile["usage"][platform] += usage.total_tokens
-        db.set(identifier, uprofile)
+        user_sql3_table.set(identifier, uprofile)
 
         response = responses[0]
         content = response["content"]
@@ -789,9 +932,11 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
 
 
 async def voice_handler(update: Update, context: CallbackContext) -> None:
-    global chat_memory, user_locks, db, user_stats
+    global chat_memory, user_locks, user_stats
 
-    logger.info("The VOICE!!!")
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
         return None
@@ -822,13 +967,14 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         else:
             recent_conversation = None
 
-        uprofile = db.get(identifier)
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
         assert uprofile is not None
 
         tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
         chat_resp_tuple = await call_chat_llm(uprofile, umemory, prompt, tlg_msg)
         output_string, updated_memory, updated_profile = chat_resp_tuple
-        db.set(identifier, updated_profile)
+        user_sql3_table.set(identifier, updated_profile)
         chat_memory[identifier] = updated_memory
 
         await reply(message, output_string)
@@ -837,9 +983,9 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
 
 
 async def audio_handler(update: Update, context: CallbackContext) -> None:
-    global chat_memory, user_locks, db, user_stats
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
-    logger.info("The AUDIO!!!")
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
         return None
@@ -854,7 +1000,9 @@ async def show_usage(update: Update, context: CallbackContext) -> None:
     """
     Issue: Misalignment when use default font in Telegram Client.
     """
-    global user_stats, db
+    global user_stats
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
 
     message: Optional[telegram.Message] = getattr(update, "message", None)
     if message is None:
@@ -871,7 +1019,8 @@ async def show_usage(update: Update, context: CallbackContext) -> None:
             logger.info("Released lock for user: %s", identifier)
             return
 
-        uprofile = db.get(identifier)
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = user_sql3_table.get(identifier)
         logger.info("Profile: %s", uprofile)
         assert uprofile is not None
 

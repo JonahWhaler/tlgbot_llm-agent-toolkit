@@ -30,7 +30,6 @@ class LLMFactory:
         platform: str,
         model_name: str,
         character: str,
-        temperature: float,
         structured_output: bool = False,
     ) -> Core:
         supported_providers = ["ollama", "openai", "deepseek", "gemini"]
@@ -44,7 +43,7 @@ class LLMFactory:
             raise ValueError(f"Invalid model. Supported models: {supported_models}")
 
         params = PARAMETER["chatcompletion"][platform]
-        params["temperature"] = temperature
+        params["temperature"] = CHARACTER[character]["temperature"]
         logger.info("Creating chat LLM: %s", params)
         config = ChatCompletionConfig(
             name=model_name,
@@ -162,7 +161,7 @@ class LLMFactory:
         system_prompt: str,
         temperature: float,
     ) -> ImageInterpreter:
-        supported_providers = ["ollama", "openai"]
+        supported_providers = ["ollama", "openai", "gemini"]
         if platform not in supported_providers:
             raise ValueError(
                 f"Invalid provider. Supported providers: {supported_providers}"
@@ -183,6 +182,10 @@ class LLMFactory:
                 connection_string=OLLAMA_HOST,
                 system_prompt=system_prompt,
                 config=config,
+            )
+        elif platform == "gemini":
+            image_interpreter = gemini.GMN_StructuredOutput_Core(
+                system_prompt=system_prompt, config=config
             )
         else:  # platform == "openai":
             image_interpreter = open_ai.OAI_StructuredOutput_Core(

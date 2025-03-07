@@ -37,6 +37,7 @@ MEMORY_LEN = int(os.environ["MEMORY_LEN"])
 DEBUG = os.environ["DEBUG"]
 FREE = os.environ["FREE"]
 
+DB_PATH = "/db/ost.db"
 # UserMetadataExtractor = """
 # Extract user's metadata from user's response.
 

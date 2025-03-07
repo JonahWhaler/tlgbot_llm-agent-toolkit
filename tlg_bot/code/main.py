@@ -4,7 +4,7 @@ Entrypoint
 
 import logging
 import time
-from typing import Any, Callable, Coroutine, Tuple
+from typing import Any, Callable, Coroutine
 
 import telegram
 from telegram.ext import (
@@ -16,8 +16,28 @@ from telegram.ext import (
     filters,
 )
 import telegram.ext
+from pydantic import BaseModel
+from mystorage import SQLite3_Storage
 import handlers
+import sa_handlers
 import myconfig
+
+
+class TimeoutModel(BaseModel):
+    connect: int
+    pool: int
+    read: int
+    write: int
+    media_write: int
+
+    def __mul__(self, factor: float) -> "TimeoutModel":
+        return TimeoutModel(
+            connect=self.connect / factor,
+            pool=self.pool / factor,
+            read=self.read / factor,
+            write=self.write / factor,
+            media_write=self.media_write / factor,
+        )
 
 
 def run_bot(bot: Application) -> None:
@@ -30,19 +50,58 @@ def run_bot(bot: Application) -> None:
     bot.add_handler(CommandHandler("start", handlers.start_handler), group=1)
     bot.add_handler(CommandHandler("new", handlers.reset_chatmemory_handler), group=1)
     bot.add_handler(CommandHandler("clear", handlers.reset_user_handler), group=1)
-    bot.add_handler(
-        CommandHandler("compress", handlers.compress_memory_handler), group=1
-    )
+    bot.add_handler(CommandHandler("usage", handlers.show_usage), group=1)
+    # bot.add_handler(
+    #     CommandHandler("compress", handlers.compress_memory_handler), group=1
+    # )
     bot.add_handler(
         CommandHandler("mycharacter", handlers.show_character_handler), group=1
     )
-    bot.add_handler(CommandHandler("models", handlers.show_model_menu), group=1)
+    bot.add_handler(
+        CommandHandler("chat_models", handlers.show_chat_model_menu), group=1
+    )
+    bot.add_handler(
+        CommandHandler("vision_models", handlers.show_vision_model_menu), group=1
+    )
+    bot.add_handler(
+        CommandHandler("system_chat_models", sa_handlers.show_chat_model_menu),
+        group=1,
+    )
+    bot.add_handler(
+        CommandHandler("system_vision_models", sa_handlers.show_vision_model_menu),
+        group=1,
+    )
+    bot.add_handler(
+        CommandHandler("pending", sa_handlers.pending_user_handler), group=1
+    )
+    bot.add_handler(
+        CommandHandler("allow", sa_handlers.allow_pending_user_handler), group=1
+    )
 
     # Buttons
     bot.add_handler(
         telegram.ext.CallbackQueryHandler(
-            handlers.set_model_handler, pattern=r"^set_model"
-        )
+            handlers.set_chat_model_handler, pattern=r"^set_chat_model"
+        ),
+        group=1,
+    )
+    bot.add_handler(
+        telegram.ext.CallbackQueryHandler(
+            handlers.set_vision_model_handler, pattern=r"^set_vision_model"
+        ),
+        group=1,
+    )
+    bot.add_handler(
+        telegram.ext.CallbackQueryHandler(
+            sa_handlers.set_chat_model_handler, pattern=r"^set_sys_chat_model"
+        ),
+        group=1,
+    )
+    bot.add_handler(
+        telegram.ext.CallbackQueryHandler(
+            sa_handlers.set_vision_model_handler, pattern=r"^set_sys_vision_model"
+        ),
+        group=1,
     )
 
     bot.add_handler(MessageHandler(filters.TEXT, handlers.message_handler), group=1)
@@ -55,11 +114,7 @@ def run_bot(bot: Application) -> None:
 
 def build(
     tk: str,
-    cto: float,
-    rto: float,
-    wto: float,
-    media_wto: float,
-    pto: float,
+    config: TimeoutModel,
     rate_limiter: AIORateLimiter,
     post_init_callback: Callable[[Application], Coroutine[Any, Any, None]],
 ) -> Application:
@@ -67,22 +122,22 @@ def build(
         ApplicationBuilder()
         .token(tk)
         .concurrent_updates(True)
-        .connect_timeout(cto)
-        .read_timeout(rto)
-        .write_timeout(wto)
-        .media_write_timeout(media_wto)
-        .pool_timeout(pto)
+        .connect_timeout(config.connect)
+        .read_timeout(config.read)
+        .write_timeout(config.write)
+        .media_write_timeout(config.media_write)
+        .pool_timeout(config.pool)
         .rate_limiter(rate_limiter)
         .post_init(post_init_callback)
         .build()
     )
 
 
-def update_timeout_factor(tf: float, mf: float = 1.2, _max: float = 10) -> float:
+def update_tf(tf: float, mf: float = 1.2, _max: float = 10) -> float:
     return round(min(tf * mf, _max), 1)
 
 
-def update_delay(d: float, mf: float = 1.2, _max: float = 60.0) -> float:
+def update_df(d: float, mf: float = 1.2, _max: float = 60.0) -> float:
     """Update delay time. (seconds)"""
     return round(min(d * mf, _max), 1)
 
@@ -94,41 +149,27 @@ async def post_init(app: Application) -> None:
         ("/new", "Start a new chat"),
         ("/clear", "Clear Memory"),
         ("/mycharacter", "Show My Character"),
+        ("/usage", "Show My Usage"),
         # ("/characters", "Show Character Menu"),
-        ("/models", "Show Model Menu"),
+        ("/chat_models", "Show Chat Completion Models"),
+        ("/vision_models", "Show Vision Interpretation Models"),
         ("/help", "Help Message"),
     ]
     await app.bot.set_my_commands(cmds)
 
 
-def update_timeout(
-    factor: float,
-    _connect_timeout: float,
-    _read_timeout: float,
-    _write_timeout: float,
-    _media_write_timeout: float,
-    _pool_timeout: float,
-) -> Tuple[float, float, float, float, float]:
-    return (
-        _connect_timeout * factor,
-        _read_timeout * factor,
-        _write_timeout * factor,
-        _media_write_timeout * factor,
-        _pool_timeout * factor,
-    )
-
-
-if __name__ == "__main__":
+def main(resource_dict: dict):
     logger = logging.getLogger(__name__)
 
-    connect_timeout, pool_timeout = 5.0, 1.0
-    read_timeout, write_timeout, media_write_timeout = 5.0, 5.0, 20.0
+    timeout_object = TimeoutModel(
+        connect=5.0, pool=1.0, read=5.0, write=5.0, media_write=20.0
+    )
     timeout_factor = 1.2
     delay, delay_factor = 5.0, 1.5
 
-    token = config.TLG_TOKEN
+    token = myconfig.TLG_TOKEN
     assert isinstance(token, str)
-    max_retry: str | int | None = config.TLG_MAX_RETRY
+    max_retry: str | int | None = myconfig.TLG_MAX_RETRY
     if max_retry is None:
         max_retry = 5
     elif isinstance(max_retry, str):
@@ -139,16 +180,11 @@ if __name__ == "__main__":
             aio_rate_limiter = AIORateLimiter(
                 overall_max_rate=10, overall_time_period=1, max_retries=max_retry
             )
-            application = build(
-                token,
-                connect_timeout,
-                read_timeout,
-                write_timeout,
-                media_write_timeout,
-                pool_timeout,
-                aio_rate_limiter,
-                post_init,
-            )
+            application = build(token, timeout_object, aio_rate_limiter, post_init)
+            application.bot_data["secret_counter"] = 987
+            # for key, resource in resource_dict.items():
+            #     application.bot_data[key] = resource
+
             run_bot(application)
             break
         except telegram.error.TimedOut as error:
@@ -156,21 +192,33 @@ if __name__ == "__main__":
                 "ErrorType: %s, ErrorMessage: %s", type(error), str(error)
             )  # AttributeError: type object 'TimedOut' has no attribute 'name'
             # Update timeout
-            timeout_factor = update_timeout_factor(timeout_factor)
-            (
-                connect_timeout,
-                read_timeout,
-                write_timeout,
-                media_write_timeout,
-                pool_timeout,
-            ) = update_timeout(
-                timeout_factor,
-                connect_timeout,
-                read_timeout,
-                write_timeout,
-                media_write_timeout,
-                pool_timeout,
-            )
+            timeout_factor = update_tf(timeout_factor)
+            timeout_object = timeout_object * timeout_factor
             # Update delay
-            delay = update_delay(delay, delay_factor)
+            delay = update_df(delay, delay_factor)
             time.sleep(delay)
+
+
+def init():
+    logging.basicConfig(
+        filename="/log/tlg_bot.log",
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%d-%b-%y %H:%M:%S",
+    )
+    logging.getLogger("httpx").setLevel(logging.WARN)
+
+    sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+    sys_sql3_table.set(
+        "chat-completion", {"provider": "gemini", "model_name": "gemini-1.5-flash"}
+    )
+    sys_sql3_table.set(
+        "image-interpretation", {"provider": "ollama", "model_name": "llava:7b"}
+    )
+    sys_sql3_table.set("transcription", {"provider": "local", "model_name": "turbo"})
+
+
+if __name__ == "__main__":
+    init()
+    global_dict = {}
+    main(global_dict)
