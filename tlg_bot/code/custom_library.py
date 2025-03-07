@@ -5,6 +5,7 @@ import logging
 import chromadb
 from telegram.ext import CallbackContext
 from telegram.error import TelegramError
+from telegram.helpers import escape_markdown
 
 
 class ChromaDBFactory:
