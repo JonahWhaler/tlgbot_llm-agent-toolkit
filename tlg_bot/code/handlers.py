@@ -642,9 +642,9 @@ async def photo_handler(update: Update, context: CallbackContext):
         assert uprofile is not None
 
         ii_resp_tuple = await ii_pipeline(uprofile, prompt, export_path, llm_factory)
-        output_string, usage = ii_resp_tuple
-        platform = uprofile["platform_i2t"]
-        uprofile["usage"][platform] += usage.total_tokens
+        output_string, updated_profile = ii_resp_tuple
+        # platform = uprofile["platform_i2t"]
+        # uprofile["usage"][platform] += usage.total_tokens
         umemory.push({"role": "user", "content": output_string})
 
         await reply(message, output_string)
@@ -653,7 +653,7 @@ async def photo_handler(update: Update, context: CallbackContext):
         if message.caption:
             prompt += f"\nCaption={message.caption}"
 
-        response_tuple = await call_chat_llm(uprofile, umemory, prompt, tlg_msg)
+        response_tuple = await call_chat_llm(updated_profile, umemory, prompt, tlg_msg)
         output_string, updated_memory, updated_profile = response_tuple
         # Leaving
         db.set(identifier, updated_profile)

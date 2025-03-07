@@ -210,17 +210,18 @@ async def call_ii(
 
 async def image_interpreter_pipeline(
     profile: dict, prompt: str, filepath: str, llm_factory: LLMFactory
-) -> tuple[str, TokenUsage]:
+) -> tuple[str, dict]:
     logger.info("Execute image_interpreter_pipeline")
     platform = profile["platform_i2t"]
     model_name = profile["model_i2t"]
     system_prompt = CHARACTER["seer"]["system_prompt"]
     image_interpreter = llm_factory.create_image_interpreter(
-        platform, model_name, system_prompt, profile["creativity"]
+        platform, model_name, system_prompt, CHARACTER["seer"]["temperature"]
     )
     responses, usage = await call_ii(image_interpreter, prompt, None, filepath=filepath)
     image_interpretation = unpack_ii_content(responses[-1]["content"])
     output_string = (
         f"Image Upload, interpreted by {model_name}:\n{image_interpretation}"
     )
-    return output_string, usage
+    profile["usage"][platform] += usage.total_tokens
+    return output_string, profile
