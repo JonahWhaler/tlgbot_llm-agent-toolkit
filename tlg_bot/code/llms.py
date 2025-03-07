@@ -49,7 +49,7 @@ class LLMFactory:
         config = ChatCompletionConfig(
             name=model_name,
             return_n=1,
-            max_iteration=1 if structured_output else 5,
+            max_iteration=1 if structured_output else 3,
             **params,
         )
 
