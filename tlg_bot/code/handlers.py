@@ -454,7 +454,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
             register_user(identifier, message.from_user.name, force=False, premium=True)
         elif (
             user_profile["status"] == "active"
-            and context.user_data["access"] == "Unauthorized Access"
+            and context.user_data.get("access", None) == "Unauthorized Access"
         ):
             context.user_data["access"] = "Granted"
 
