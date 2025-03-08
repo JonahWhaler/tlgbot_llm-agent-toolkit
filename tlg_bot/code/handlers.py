@@ -449,14 +449,14 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                     chat_id=message.chat.id, text="Unauthorized Access."
                 )
                 return
-
-            register_memory(identifier, force=False)
-            register_user(identifier, message.from_user.name, force=False, premium=True)
         elif (
             user_profile["status"] == "active"
             and context.user_data.get("access", None) == "Unauthorized Access"
         ):
             context.user_data["access"] = "Granted"
+
+        register_memory(identifier, force=False)
+        register_user(identifier, message.from_user.name, force=False, premium=True)
 
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         if message.text:
