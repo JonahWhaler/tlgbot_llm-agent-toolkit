@@ -95,6 +95,9 @@ async def show_vision_model_menu(update: Update, context: CallbackContext) -> No
         keyboard = []
         providers = list(myconfig.PROVIDER.keys())
         for provider in providers:
+            if "i2t" not in myconfig.PROVIDER[provider]:
+                continue
+
             models = list(myconfig.PROVIDER[provider]["i2t"])
             for model_name in models:
                 name = f"{provider} - {model_name}"
