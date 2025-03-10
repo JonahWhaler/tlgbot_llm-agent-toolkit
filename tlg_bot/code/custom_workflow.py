@@ -41,8 +41,11 @@ async def find_best_agent(
         agents.append(agent_object)
 
     input_prompt = {"request": prompt, "agents": agents}
+    if context:
+        input_prompt["context"] = context
+
     responses, usage = await agent_router.run_async(
-        query=json.dumps(input_prompt), context=context, mode=ResponseMode.JSON
+        query=json.dumps(input_prompt), context=None, mode=ResponseMode.JSON
     )
 
     # Output
