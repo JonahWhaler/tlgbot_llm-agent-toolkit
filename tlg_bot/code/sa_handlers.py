@@ -116,6 +116,55 @@ async def show_vision_model_menu(update: Update, context: CallbackContext) -> No
         )
 
 
+async def show_transcription_model_menu(
+    update: Update, context: CallbackContext
+) -> None:
+    logger = logging.getLogger(__name__)
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_sa_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+
+        output_string = "Click to select a transcription model:\n"
+
+        keyboard = []
+        provider = "local"
+        models = ["tiny", "small", "medium", "large", "turbo"]
+        for model_name in models:
+            name = f"{provider} - {model_name}"
+            keyboard.append(
+                [
+                    telegram.InlineKeyboardButton(
+                        name,
+                        callback_data=f"set_sys_transcription_model|{provider}$$${model_name}",
+                    )
+                ]
+            )
+        keyboard.append(
+            [
+                telegram.InlineKeyboardButton(
+                    "openai - whisper-1",
+                    callback_data="set_sys_transcription_model|openai$$$whisper-1",
+                )
+            ]
+        )
+
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+        await message.reply_text(
+            output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+        )
+
+
 async def set_chat_model_handler(update: Update, context: CallbackContext) -> None:
     logger = logging.getLogger(__name__)
 
