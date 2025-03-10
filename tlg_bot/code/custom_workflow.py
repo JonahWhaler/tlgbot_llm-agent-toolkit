@@ -5,6 +5,8 @@ from typing import Optional
 from datetime import datetime
 from telegram import Message
 from telegram.ext import CallbackContext
+from telegram.error import TelegramError
+from telegram.constants import ParseMode
 from llm_agent_toolkit import Core, ResponseMode, ShortTermMemory, ImageInterpreter
 from llm_agent_toolkit._util import TokenUsage
 from llm_agent_toolkit.transcriber import Transcriber
@@ -139,7 +141,16 @@ async def process_audio_input(
         file_extension = "mp3"
 
     temp_path = os.path.join(user_folder, f"{file_id}.{file_extension}")
-    await store_to_drive(file_id, temp_path, context, False)
+    try:
+        await store_to_drive(file_id, temp_path, context, False)
+    except TelegramError as te:
+        if str(te) == "File is too big":
+            await message.reply_text(
+                "<b>Warning</b>: File is too big.", parse_mode=ParseMode.HTML
+            )
+        return None, None
+    except Exception:
+        return None, None
 
     try:
         responses = await transcriber.transcribe_async(

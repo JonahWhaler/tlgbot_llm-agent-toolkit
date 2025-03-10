@@ -484,6 +484,15 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                 user_folder=f"/temp/{identifier}",
             )
 
+            if transcript is None:
+                chat_memory[identifier].push(
+                    {
+                        "role": "user",
+                        "content": "Audio Upload failed - File is too big.",
+                    }
+                )
+                return
+
             if transcript:
                 prefix = "Audio Upload" if message.audio else "Voice Input"
                 content = f"{prefix}:\n{transcript}"
