@@ -252,6 +252,51 @@ async def set_vision_model_handler(update: Update, context: CallbackContext) -> 
     logger.info("Released lock for user: %s", identifier)
 
 
+async def set_transcription_model_handler(
+    update: Update, context: CallbackContext
+) -> None:
+    logger = logging.getLogger(__name__)
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    callback_query = update.callback_query
+
+    if callback_query is None:
+        raise ValueError("Callback query is None.")
+
+    message = callback_query.message
+
+    if message is None:
+        raise ValueError("Message is None.")
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_sa_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+
+        query = update.callback_query
+        await query.answer()
+
+        provider_model = query.data.split("|")[1]
+        provider, model_name = provider_model.split("$$$")
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        sys_sql3_table.set(
+            "audio-transcription", {"provider": provider, "model_name": model_name}
+        )
+
+        await context.bot.send_message(
+            chat_id=message.chat.id,
+            text=f"Audio transcription model set to {provider} - {model_name}",
+            parse_mode=ParseMode.HTML,
+        )
+
+    logger.info("Released lock for user: %s", identifier)
+
+
 async def pending_user_handler(update: Update, context: CallbackContext) -> None:
     logger = logging.getLogger(__name__)
     if context.user_data.get("access", None) == "Unauthorized Access":

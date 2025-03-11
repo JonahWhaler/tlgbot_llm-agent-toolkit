@@ -72,6 +72,12 @@ def run_bot(bot: Application) -> None:
         group=1,
     )
     bot.add_handler(
+        CommandHandler(
+            "system_transcription_models", sa_handlers.show_transcription_model_menu
+        ),
+        group=1,
+    )
+    bot.add_handler(
         CommandHandler("pending", sa_handlers.pending_user_handler), group=1
     )
     bot.add_handler(
@@ -100,6 +106,13 @@ def run_bot(bot: Application) -> None:
     bot.add_handler(
         telegram.ext.CallbackQueryHandler(
             sa_handlers.set_vision_model_handler, pattern=r"^set_sys_vision_model"
+        ),
+        group=1,
+    )
+    bot.add_handler(
+        telegram.ext.CallbackQueryHandler(
+            sa_handlers.set_transcription_model_handler,
+            pattern=r"^set_sys_transcription_model",
         ),
         group=1,
     )
