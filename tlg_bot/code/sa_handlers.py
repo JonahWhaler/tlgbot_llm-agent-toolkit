@@ -95,6 +95,9 @@ async def show_vision_model_menu(update: Update, context: CallbackContext) -> No
         keyboard = []
         providers = list(myconfig.PROVIDER.keys())
         for provider in providers:
+            if "i2t" not in myconfig.PROVIDER[provider]:
+                continue
+
             models = list(myconfig.PROVIDER[provider]["i2t"])
             for model_name in models:
                 name = f"{provider} - {model_name}"
@@ -106,6 +109,55 @@ async def show_vision_model_menu(update: Update, context: CallbackContext) -> No
                         )
                     ]
                 )
+
+        reply_markup = telegram.InlineKeyboardMarkup(keyboard)
+        await message.reply_text(
+            output_string, reply_markup=reply_markup, parse_mode=ParseMode.HTML
+        )
+
+
+async def show_transcription_model_menu(
+    update: Update, context: CallbackContext
+) -> None:
+    logger = logging.getLogger(__name__)
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_sa_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+
+        output_string = "Click to select a transcription model:\n"
+
+        keyboard = []
+        provider = "local"
+        models = ["tiny", "small", "medium", "large", "turbo"]
+        for model_name in models:
+            name = f"{provider} - {model_name}"
+            keyboard.append(
+                [
+                    telegram.InlineKeyboardButton(
+                        name,
+                        callback_data=f"set_sys_transcription_model|{provider}$$${model_name}",
+                    )
+                ]
+            )
+        keyboard.append(
+            [
+                telegram.InlineKeyboardButton(
+                    "openai - whisper-1",
+                    callback_data="set_sys_transcription_model|openai$$$whisper-1",
+                )
+            ]
+        )
 
         reply_markup = telegram.InlineKeyboardMarkup(keyboard)
         await message.reply_text(
@@ -194,6 +246,51 @@ async def set_vision_model_handler(update: Update, context: CallbackContext) -> 
         await context.bot.send_message(
             chat_id=message.chat.id,
             text=f"Vision Interpretation model set to {provider} - {model_name}",
+            parse_mode=ParseMode.HTML,
+        )
+
+    logger.info("Released lock for user: %s", identifier)
+
+
+async def set_transcription_model_handler(
+    update: Update, context: CallbackContext
+) -> None:
+    logger = logging.getLogger(__name__)
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    callback_query = update.callback_query
+
+    if callback_query is None:
+        raise ValueError("Callback query is None.")
+
+    message = callback_query.message
+
+    if message is None:
+        raise ValueError("Message is None.")
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_sa_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+
+        query = update.callback_query
+        await query.answer()
+
+        provider_model = query.data.split("|")[1]
+        provider, model_name = provider_model.split("$$$")
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        sys_sql3_table.set(
+            "audio-transcription", {"provider": provider, "model_name": model_name}
+        )
+
+        await context.bot.send_message(
+            chat_id=message.chat.id,
+            text=f"Audio transcription model set to {provider} - {model_name}",
             parse_mode=ParseMode.HTML,
         )
 

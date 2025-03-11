@@ -459,10 +459,10 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         register_user(identifier, message.from_user.name, force=False, premium=True)
 
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        cc_row = sys_sql3_table.get("chat-completion")
+        assert cc_row is not None
         if message.text:
             if not message.text.startswith("/"):
-                cc_row = sys_sql3_table.get("chat-completion")
-                assert cc_row is not None
                 agent_zero = llm_factory.create_chat_llm(
                     cc_row["provider"], cc_row["model_name"], "extractor", True
                 )
@@ -470,7 +470,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                     agent_zero, chat_memory, user_sql3_table, identifier, message.text
                 )
         elif message.voice or message.audio:
-            t_row = sys_sql3_table.get("transcription")
+            t_row = sys_sql3_table.get("audio-transcription")
             transcriber_factory = TranscriberFactory(
                 provider=t_row["provider"],
                 model_name=t_row["model_name"],
@@ -484,6 +484,15 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                 user_folder=f"/temp/{identifier}",
             )
 
+            if transcript is None:
+                chat_memory[identifier].push(
+                    {
+                        "role": "user",
+                        "content": "Audio Upload failed - File is too big.",
+                    }
+                )
+                return
+
             if transcript:
                 prefix = "Audio Upload" if message.audio else "Voice Input"
                 content = f"{prefix}:\n{transcript}"
@@ -496,7 +505,9 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                 token_usage = await update_memory(
                     agent_zero, chat_memory, user_sql3_table, identifier, content
                 )
-                await reply(message, f"**Whisper 🎤**:\n{transcript}")
+                await reply(
+                    message, f"**Whisper 🎤 [{t_row['model_name']}]**:\n{transcript}"
+                )
 
             if txt_path:
                 await message.reply_document(
@@ -509,8 +520,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         if token_usage:
             uprofile = user_sql3_table.get(identifier)
             assert uprofile is not None
-            default_provider, _ = myconfig.DEFAULT_T2T_MODEL
-            uprofile["usage"][default_provider] += token_usage.total_tokens
+            uprofile["usage"][cc_row["provider"]] += token_usage.total_tokens
             user_sql3_table.set(identifier, uprofile)
 
 
@@ -600,7 +610,12 @@ async def call_chat_llm(
 
     auto_routing = profile["auto_routing"]
     if auto_routing:
-        agent_router = llm_factory.create_chat_llm(platform, model_name, "router", True)
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        cc_row = sys_sql3_table.get("chat-completion")
+        assert cc_row is not None
+        agent_router = llm_factory.create_chat_llm(
+            cc_row["provider"], cc_row["model_name"], "router", True
+        )
         tlg_msg = await tlg_msg.edit_text(
             "<b>Progress</b>: <i>ROUTING</i>", parse_mode=ParseMode.HTML
         )
@@ -609,7 +624,7 @@ async def call_chat_llm(
             prompt,
             context=recent_conv[-3:] if recent_conv else recent_conv,
         )
-        profile["usage"][platform] += find_best_agent_usage.total_tokens
+        profile["usage"][cc_row["provider"]] += find_best_agent_usage.total_tokens
 
     llm = llm_factory.create_chat_llm(platform, model_name, character)
     tlg_msg = await tlg_msg.edit_text(

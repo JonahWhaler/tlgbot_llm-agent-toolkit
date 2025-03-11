@@ -152,9 +152,10 @@ async def store_to_drive(
         return None
     except TelegramError as tg_err:
         logger.error("[store_to_drive]=TelegramError: %s", str(tg_err))
+        raise
     except Exception as e:
         logger.error("[store_to_drive]=Exception: %s", str(e))
-    raise RuntimeError(f"({file_id}, {temp_path}) => File download failed.")
+        raise
 
 
 def unpack_ii_content(data: str) -> str:
