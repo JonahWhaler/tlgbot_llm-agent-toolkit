@@ -470,7 +470,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                     agent_zero, chat_memory, user_sql3_table, identifier, message.text
                 )
         elif message.voice or message.audio:
-            t_row = sys_sql3_table.get("transcription")
+            t_row = sys_sql3_table.get("audio-transcription")
             transcriber_factory = TranscriberFactory(
                 provider=t_row["provider"],
                 model_name=t_row["model_name"],
