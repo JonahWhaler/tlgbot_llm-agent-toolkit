@@ -215,7 +215,9 @@ def init():
     sys_sql3_table.set(
         "image-interpretation", {"provider": "ollama", "model_name": "llava:7b"}
     )
-    sys_sql3_table.set("transcription", {"provider": "local", "model_name": "turbo"})
+    sys_sql3_table.set(
+        "audio-transcription", {"provider": "local", "model_name": "turbo"}
+    )
 
 
 if __name__ == "__main__":
