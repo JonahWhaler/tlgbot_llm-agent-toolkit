@@ -505,7 +505,9 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
                 token_usage = await update_memory(
                     agent_zero, chat_memory, user_sql3_table, identifier, content
                 )
-                await reply(message, f"**Whisper 🎤**:\n{transcript}")
+                await reply(
+                    message, f"**Whisper 🎤 [{t_row['model_name']}]**:\n{transcript}"
+                )
 
             if txt_path:
                 await message.reply_document(
