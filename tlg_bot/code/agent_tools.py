@@ -20,7 +20,7 @@ from llm_agent_toolkit import (
 )
 from llm_agent_toolkit.tool import LazyTool
 from llm_agent_toolkit.memory import ChromaMemory
-from llm_agent_toolkit import Core
+from llm_agent_toolkit import Core, ChatCompletionConfig
 
 from mystorage import WebCache
 import myconfig
@@ -536,6 +536,97 @@ class DDGSmartSearchTool(Tool):
         return cleaned_text
 
 
+class JITChatCompletionAgent(Tool):
+    """
+    Let this be JIT tool, instead of locking it to Gemini only.
+    """
+
+    def __init__(self, config: ChatCompletionConfig):
+        Tool.__init__(self, JITChatCompletionAgent.function_info(), True)
+        self.config = config
+
+    @staticmethod
+    def function_info():
+        description = """
+        Define a single use llm agent and delegate work to the agent.
+        This allows the main LLM focus on the execution orders by delegating the sub-problems
+        to the agent.
+
+        Note: The created agent has no function calling capability.
+        """
+        return FunctionInfo(
+            name="JITChatCompletionAgent",
+            description=description,
+            parameters=FunctionParameters(
+                properties=[
+                    FunctionProperty(
+                        name="system_prompt",
+                        type=FunctionPropertyType.STRING,
+                        description="System instruction of the agent.",
+                    ),
+                    FunctionProperty(
+                        name="question_or_task",
+                        type=FunctionPropertyType.STRING,
+                        description="Questions to answer or a task to perform.",
+                    ),
+                ],
+                type="object",
+                required=["system_prompt", "question_or_task"],
+            ),
+        )
+
+    async def run_async(self, params: str) -> str:
+        from llm_agent_toolkit.core.gemini import Text_to_Text
+
+        if not self.validate(params=params):
+            return {"error": "Invalid parameters for JITChatCompletionAgent"}
+
+        # Load parameters
+        params = json.loads(params)
+        logger.warning("GeminiSmartTool: %s", params)
+        system_prompt = params.get("system_prompt", None)
+        question_or_task = params.get("question_or_task", None)
+
+        llm = Text_to_Text(system_prompt=system_prompt, config=self.config)
+        try:
+            responses, usage = await llm.run_async(query=question_or_task, context=None)
+            self.token_usage = self.token_usage + usage
+            output_strings = []
+            for response in responses:
+                output_strings.append(response["content"])
+
+            return "\n".join(output_strings)
+        except Exception as e:
+            logger.error("GeminiSmartTool: %s", str(e), exc_info=True, stack_info=True)
+            return f"Status=Failed. Reason={str(e)}"
+
+    def run(self, params: str) -> str:
+        from llm_agent_toolkit.core.gemini import Text_to_Text
+
+        if not self.validate(params=params):
+            return {"error": "Invalid parameters for JITChatCompletionAgent"}
+
+        # Load parameters
+        params = json.loads(params)
+        logger.warning("GeminiSmartTool: %s", params)
+
+        system_prompt = params.get("system_prompt", None)
+        question_or_task = params.get("question_or_task", None)
+
+        llm = Text_to_Text(system_prompt=system_prompt, config=self.config)
+        try:
+            responses, usage = llm.run(query=question_or_task, context=None)
+            self.token_usage = self.token_usage + usage
+            output_strings = []
+            for response in responses:
+                output_strings.append(response["content"])
+
+            return "\n".join(output_strings)
+        except Exception as e:
+            logger.error("GeminiSmartTool: %s", str(e), exc_info=True, stack_info=True)
+            return f"Status=Failed. Reason={str(e)}"
+
+
 class ToolFactory:
     def __init__(
         self,
@@ -559,4 +650,14 @@ class ToolFactory:
             if llm is None:
                 raise ValueError("LLM is required for DDGSmartSearchTool")
             return DDGSmartSearchTool(llm=llm, web_cache=self.web_db)
+        if tool_name == "JITChatCompletionAgent":
+            config = ChatCompletionConfig(
+                name=llm.config.name,
+                return_n=1,
+                max_iteration=1,
+                max_tokens=4096,
+                max_output_tokens=1024,
+                temperature=0.7,
+            )
+            return JITChatCompletionAgent(config=config)
         return None
