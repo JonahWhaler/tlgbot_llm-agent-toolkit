@@ -33,7 +33,7 @@ from custom_workflow import (
     process_audio_input,
     reply,
 )
-from custom_library import store_to_drive, format_identifier
+from custom_library import store_to_drive, format_identifier, map_file_extension
 from transcriber import TranscriberFactory
 from mystorage import ChromaDBFactory, WebCache, SQLite3_Storage
 import myconfig
@@ -1007,3 +1007,110 @@ async def audio_handler(update: Update, context: CallbackContext) -> None:
 
     # ulock = get_user_lock(identifier)
     # await reply(message, "COPY")
+
+
+async def document_handler(update: Update, context: CallbackContext) -> None:
+    from llm_agent_toolkit.loader import TextLoader, PDFLoader, MsWordLoader
+    from llm_agent_toolkit.encoder.local import OllamaEncoder
+    from llm_agent_toolkit.memory import ChromaMemory
+    from llm_agent_toolkit.chunkers import SemanticChunker
+
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    identifier: str = format_identifier(message.chat.id)
+
+    ulock = get_user_lock(identifier)
+
+    async with ulock:
+        await reply(message, "COPY")
+        namespace = f"/temp/{identifier}"
+        fid = message.document.file_id
+
+        f_ext = map_file_extension(message.document.mime_type)
+        f_name = message.document.file_name
+        assert f_ext == f_name.split(".")[-1]
+        export_path = f"{namespace}/{f_name}"
+        await store_to_drive(fid, export_path, context, overwrite=True)
+
+        if f_ext in ["txt", "md"]:
+            loader = TextLoader()
+        else:
+            db = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+            uprofile = db.get(identifier)
+            assert uprofile is not None
+            ii = llm_factory.create_image_interpreter(
+                platform=uprofile["platform_i2t"],
+                model_name=uprofile["model_i2t"],
+                system_prompt=myconfig.CHARACTER["seer"]["system_prompt"],
+                temperature=myconfig.CHARACTER["seer"]["temperature"],
+            )
+            if f_ext == "pdf":
+                loader = PDFLoader(
+                    text_only=False, tmp_directory=namespace, image_interpreter=ii
+                )
+            elif f_ext == "docx":
+                loader = MsWordLoader(
+                    text_only=False, tmp_directory=namespace, image_interpreter=ii
+                )
+            else:
+                raise ValueError("Invalid file ext")
+
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        e_row = sys_sql3_table.get("embedding")
+        content: str = await loader.load_async(export_path)
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{namespace}"
+        )
+        assert e_row["provider"] == "local"
+        encoder = OllamaEncoder(myconfig.OLLAMA_HOST, model_name=e_row["model_name"])
+        K = max(len(content) // encoder.ctx_length, 1)
+        chunker_config = {
+            "K": K * 2,
+            "MAX_ITERATION": K * 5,
+            "update_rate": 0.1,
+            "min_coverage": 0.95,
+        }
+        chunker = SemanticChunker(encoder=encoder, config=chunker_config)
+        cm = ChromaMemory(vdb=user_vdb, encoder=encoder, chunker=chunker)
+        added = False
+        try:
+            cm.add(
+                document_string=content,
+                identifier=f_name,
+                metadata={"mime_type": message.document.mime_type},
+            )
+            added = True
+        except ValueError as ve:
+            logger.error("Add data to ChromaMemory: FAILED.\n%s", str(ve))
+        if added:
+            output_string = "Add data to ChromaMemory: *DONE*"
+        else:
+            output_string = "Add data to ChromaMemory: *FAILED*"
+        await reply(message, output_string)
+
+
+async def attachment_handler(update: Update, context: CallbackContext) -> None:
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    # identifier: str = format_identifier(message.chat.id)
+    # ulock = get_user_lock(identifier)
+
+    if message.photo:
+        logger.info("Redirect -> photo_handler")
+        await photo_handler(update, context)
+        return None
+
+    if message.document:
+        logger.info("Redirect -> document_handler")
+        await document_handler(update, context)
+        return None

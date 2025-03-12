@@ -91,7 +91,7 @@ def escape_html(text) -> str:
     """
     Escape special characters for Telegram's HTMLV2.
     """
-    logger = logging.getLogger(__name__)
+    # logger = logging.getLogger(__name__)
 
     _text = text[:]
     _text = _text.replace("&", "&amp;")
@@ -122,7 +122,7 @@ def escape_html(text) -> str:
             break
 
     # print("Raw HTML: %s", text)
-    logger.info("Escaped HTML: %s", _text)
+    # logger.info("Escaped HTML: %s", _text)
     return _text
 
 
@@ -200,3 +200,22 @@ def unpack_ii_content(data: str) -> str:
 
 def format_identifier(identifier: int) -> str:
     return f"g{identifier}" if identifier < 0 else str(identifier)
+
+
+def map_file_extension(mime_type: str):
+    if mime_type == "application/pdf":
+        return "pdf"
+    if (
+        mime_type
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ):
+        return "docx"
+    if mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        return "xlsx"
+    if mime_type == "text/plain":
+        return "txt"
+    if mime_type == "text/html":
+        return "html"
+    if mime_type == "text/markdown":
+        return "md"
+    return mime_type.split("/")[1]

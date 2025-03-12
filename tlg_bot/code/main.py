@@ -121,6 +121,9 @@ def run_bot(bot: Application) -> None:
     bot.add_handler(MessageHandler(filters.PHOTO, handlers.photo_handler), group=1)
     bot.add_handler(MessageHandler(filters.VOICE, handlers.voice_handler), group=1)
     bot.add_handler(MessageHandler(filters.AUDIO, handlers.audio_handler), group=1)
+    bot.add_handler(
+        MessageHandler(filters.ATTACHMENT, handlers.attachment_handler), group=1
+    )
     bot.add_error_handler(handlers.error_handler)
     bot.run_polling(poll_interval=1.0)
 
@@ -230,6 +233,9 @@ def init():
     )
     sys_sql3_table.set(
         "audio-transcription", {"provider": "local", "model_name": "turbo"}
+    )
+    sys_sql3_table.set(
+        "embedding", {"provider": "local", "model_name": "bge-m3:latest"}
     )
 
 
