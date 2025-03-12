@@ -179,4 +179,5 @@ config/*.yaml
 data/log/
 data/db/
 data/temp/*/
+data/temp/
 data/assets/
