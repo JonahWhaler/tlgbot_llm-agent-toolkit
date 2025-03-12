@@ -63,7 +63,7 @@ async def find_best_agent(
             logger.warning("Falling back to default agent.")
             best_agent = DEFAULT_CHARACTER
         reason = output_object.get("reason", "No reason provided.")
-        logger.info("Pick %s. Reason: %s", CHARACTER[best_agent], reason)
+        logger.info("Pick %s. Reason: %s", best_agent, reason)
         return best_agent, usage
     except json.JSONDecodeError:
         return DEFAULT_CHARACTER
