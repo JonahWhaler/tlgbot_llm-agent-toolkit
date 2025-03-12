@@ -25,4 +25,4 @@ services:
         source: ./data/assets
         target: /assets
     extra_hosts:
-    - "host.docker.internal:192.168.0.55" # Replace "192.168.0.55" with your own local IP
+    - "host.docker.internal:${HOST_IP}"
