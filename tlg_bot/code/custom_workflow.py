@@ -1,8 +1,10 @@
 import os
 import json
+import re
 import logging
 from typing import Optional
 from datetime import datetime
+import telegram
 from telegram import Message
 from telegram.ext import CallbackContext
 from telegram.error import TelegramError
@@ -239,3 +241,58 @@ async def image_interpreter_pipeline(
     )
     profile["usage"][platform] += usage.total_tokens
     return output_string, profile
+
+
+async def reply(
+    message: telegram.Message, output_string: str
+) -> telegram.Message | None:
+    from custom_library import escape_html, escape_markdown_extended
+
+    if DEBUG == "1":
+        logger.info(">> %s", output_string)
+
+    MSG_MAX_LEN = 3800
+    sections = re.split(r"\n{2,}", output_string)
+    current_chunk = ""
+    msg = None
+    for section in sections:
+        if len(current_chunk) + len(section) + 2 <= MSG_MAX_LEN:
+            current_chunk += section + "\n\n"
+        else:
+            try:
+                html_compatible_chunk = escape_html(current_chunk)
+                msg = await message.reply_text(
+                    html_compatible_chunk, parse_mode=ParseMode.HTML
+                )
+            except telegram.error.BadRequest as bre:
+                if "Can't parse entities:" not in str(bre):
+                    logger.error(str(bre))
+                    raise
+
+                logger.warning("Fallback to MARKDOWN_V2 mode.")
+                formatted_chunk = escape_markdown_extended(current_chunk)
+                # formatted_chunk, is_close = handle_triple_ticks(formatted_chunk, is_close)
+                msg = await message.reply_text(
+                    formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
+                )
+            current_chunk = section + "\n\n"
+
+    # Handle the last chunk
+    if current_chunk:
+        try:
+            html_compatible_chunk = escape_html(current_chunk)
+            msg = await message.reply_text(
+                html_compatible_chunk, parse_mode=ParseMode.HTML
+            )
+        except telegram.error.BadRequest as bre:
+            if "Can't parse entities:" not in str(bre):
+                logger.error(str(bre))
+                raise
+
+            logger.warning("Fallback to MARKDOWN_V2 mode.")
+            formatted_chunk = escape_markdown_extended(current_chunk)
+            # formatted_chunk, _ = handle_triple_ticks(formatted_chunk, is_close)
+            msg = await message.reply_text(
+                formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
+            )
+    return msg
