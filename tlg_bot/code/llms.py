@@ -178,16 +178,25 @@ class LLMFactory:
         )
         image_interpreter: ImageInterpreter | None
         if platform == "ollama":
+            if local.OllamaCore.csv_path is None:
+                local.OllamaCore.load_csv("/config/ollama.csv")
+
             image_interpreter = local.Image_to_Text_SO(
                 connection_string=OLLAMA_HOST,
                 system_prompt=system_prompt,
                 config=config,
             )
         elif platform == "gemini":
+            if gemini.GeminiCore.csv_path is None:
+                gemini.GeminiCore.load_csv("/config/gemini.csv")
+
             image_interpreter = gemini.GMN_StructuredOutput_Core(
                 system_prompt=system_prompt, config=config
             )
         else:  # platform == "openai":
+            if open_ai.OpenAICore.csv_path is None:
+                open_ai.OpenAICore.load_csv("/config/openai.csv")
+
             image_interpreter = open_ai.OAI_StructuredOutput_Core(
                 system_prompt=system_prompt, config=config
             )
