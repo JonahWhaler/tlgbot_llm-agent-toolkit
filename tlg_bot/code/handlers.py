@@ -1010,7 +1010,12 @@ async def audio_handler(update: Update, context: CallbackContext) -> None:
 
 
 async def document_handler(update: Update, context: CallbackContext) -> None:
-    from llm_agent_toolkit.loader import TextLoader, PDFLoader, MsWordLoader
+    from llm_agent_toolkit.loader import (
+        TextLoader,
+        PDFLoader,
+        MsWordLoader,
+        ImageToTextLoader,
+    )
     from llm_agent_toolkit.encoder.local import OllamaEncoder
     from llm_agent_toolkit.memory import ChromaMemory
     from llm_agent_toolkit.chunkers import SemanticChunker
@@ -1038,12 +1043,14 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
 
         f_ext = map_file_extension(message.document.mime_type)
         f_name = message.document.file_name
-        assert f_ext == f_name.split(".")[-1], f"{f_ext} != {f_name.split('.')[-1]}"
+        # assert f_ext == f_name.split(".")[-1], f"{f_ext} != {f_name.split('.')[-1]}"
         export_path = f"{namespace}/{f_name}"
         await store_to_drive(fid, export_path, context, overwrite=True)
 
         db = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
         uprofile = db.get(identifier)
+
+        character = "speed_reader"
         if f_ext in ["txt", "md"]:
             loader = TextLoader()
         else:
@@ -1054,7 +1061,15 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
                 system_prompt=myconfig.CHARACTER["seer"]["system_prompt"],
                 temperature=myconfig.CHARACTER["seer"]["temperature"],
             )
-            if f_ext == "pdf":
+            if f_ext in ["jpg", "png", "jpeg"]:
+                character = "general"
+                loader = ImageToTextLoader(
+                    image_interpreter=ii,
+                    prompt=(
+                        message.caption if message.caption else "Describe the image."
+                    ),
+                )
+            elif f_ext == "pdf":
                 loader = PDFLoader(
                     text_only=False, tmp_directory=namespace, image_interpreter=ii
                 )
@@ -1073,7 +1088,7 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         )
         assert e_row["provider"] == "local"
         encoder = OllamaEncoder(myconfig.OLLAMA_HOST, model_name=e_row["model_name"])
-        K = max(len(content) // encoder.ctx_length, 1)
+        K = max(len(content) // min(encoder.ctx_length, 400), 1)
         chunker_config = {
             "K": K * 2,
             "MAX_ITERATION": K * 5,
@@ -1096,7 +1111,7 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
             output_string = "Add data to ChromaMemory: *FAILED*"
             await reply(message, output_string)
             return None
-        character = "speed_reader"
+
         llm = llm_factory.create_chat_llm(
             uprofile["platform_t2t"], uprofile["model_t2t"], character, False
         )
@@ -1147,6 +1162,14 @@ async def attachment_handler(update: Update, context: CallbackContext) -> None:
         return None
 
     if message.document:
+        f_ext = map_file_extension(message.document.mime_type)
+        # Excel, CSV, JSON, and other structured data files should be handled differently
+
+        # Focus on text content first
+        if f_ext not in ["pdf", "docx", "txt", "md", "html", "jpg", "png", "jpeg"]:
+            logger.warning("Unsupported File Extension: %s", f_ext)
+            return None
+
         logger.info("Redirect -> document_handler")
         await document_handler(update, context)
         return None
