@@ -1028,20 +1028,25 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
 
     async with ulock:
         await reply(message, "COPY")
+
+        umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
+        if umemory is None:
+            raise ValueError("Memory is None.")
+
         namespace = f"/temp/{identifier}"
         fid = message.document.file_id
 
         f_ext = map_file_extension(message.document.mime_type)
         f_name = message.document.file_name
-        assert f_ext == f_name.split(".")[-1]
+        assert f_ext == f_name.split(".")[-1], f"{f_ext} != {f_name.split('.')[-1]}"
         export_path = f"{namespace}/{f_name}"
         await store_to_drive(fid, export_path, context, overwrite=True)
 
+        db = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = db.get(identifier)
         if f_ext in ["txt", "md"]:
             loader = TextLoader()
         else:
-            db = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
-            uprofile = db.get(identifier)
             assert uprofile is not None
             ii = llm_factory.create_image_interpreter(
                 platform=uprofile["platform_i2t"],
@@ -1087,10 +1092,41 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
             added = True
         except ValueError as ve:
             logger.error("Add data to ChromaMemory: FAILED.\n%s", str(ve))
-        if added:
-            output_string = "Add data to ChromaMemory: *DONE*"
-        else:
+        if not added:
             output_string = "Add data to ChromaMemory: *FAILED*"
+            await reply(message, output_string)
+            return None
+        character = "speed_reader"
+        llm = llm_factory.create_chat_llm(
+            uprofile["platform_t2t"], uprofile["model_t2t"], character, False
+        )
+        prompt = """
+        ---
+        CONTENT START
+        ${{CONTENT}}
+        CONTENT END
+        ---
+        """
+        content_window = int(min(llm.context_length * 0.75, 20_000))
+        templated_prompt = prompt.replace("${{CONTENT}}", content[:content_window])
+        responses, usage = await call_llm(
+            llm,
+            prompt=templated_prompt,
+            context=None,
+            mode=ResponseMode.DEFAULT,
+            response_format=None,
+        )
+        file_summary = responses[-1]["content"]
+
+        umemory.push({"role": "user", "content": f"File Summary:\n{file_summary}"})
+        chat_memory[identifier] = umemory
+
+        logger.info("Generated %d responses.", len(responses))
+        uprofile["usage"][uprofile["platform_t2t"]] += usage.total_tokens
+        db.set(identifier, uprofile)
+        character_name = myconfig.CHARACTER[character]["name"]
+        model_name = uprofile["model_t2t"]
+        output_string = f"**{character_name}** [*{model_name}*]:\n{file_summary}"
         await reply(message, output_string)
 
 
