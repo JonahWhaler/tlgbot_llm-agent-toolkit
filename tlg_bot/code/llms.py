@@ -22,8 +22,13 @@ logger = logging.getLogger(__name__)
 
 class LLMFactory:
 
-    def __init__(self, vdb: chromadb.ClientAPI, webcache: WebCache):
-        self.tool_factory = ToolFactory(vdb=vdb, web_db=webcache)
+    def __init__(
+        self,
+        vdb: chromadb.ClientAPI,
+        webcache: WebCache,
+        user_vdb: chromadb.ClientAPI | None = None,
+    ):
+        self.tool_factory = ToolFactory(vdb=vdb, web_db=webcache, user_vdb=user_vdb)
 
     def create_chat_llm(
         self,

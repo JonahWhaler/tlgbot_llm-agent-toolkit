@@ -53,7 +53,6 @@ main_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
     persist=True, persist_directory="/temp/vect"
 )
 web_db = WebCache(ttl=600, maxsize=128)
-llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
 
 #### Workflows ####
@@ -177,10 +176,12 @@ async def call_llm(
 
 
 async def call_chat_llm(
-    profile: dict, memory: ShortTermMemory, prompt: str, tlg_msg: telegram.Message
+    profile: dict,
+    memory: ShortTermMemory,
+    prompt: str,
+    tlg_msg: telegram.Message,
+    llm_factory: LLMFactory,
 ) -> tuple[str, ShortTermMemory, dict]:
-    global llm_factory
-
     logger.info("Executing call_chat_llm")
     platform = profile["platform_t2t"]
     model_name = profile["model_t2t"]
@@ -258,7 +259,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
     """
     Intercepts messages
     """
-    global chat_memory, rate_limiter, user_stats, llm_factory
+    global chat_memory, rate_limiter, user_stats, main_vdb, web_db
     # logger = logging.getLogger(__name__)
     logger.info("Middleware => Update: %s", update)
     # Filter out Non-user updates
@@ -286,6 +287,8 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         )
         if not allowed_to_pass:
             return
+
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
         token_usage = None
         user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
@@ -706,7 +709,8 @@ class CompressContent(BaseModel):
 
 
 async def compress_memory_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, user_stats
+    global chat_memory, user_locks, user_stats, main_vdb, web_db
+
     if context.user_data.get("access", None) == "Unauthorized Access":
         return None
 
@@ -718,12 +722,15 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
 
     ulock = get_user_lock(identifier)
     async with ulock:
-        logger.info("Acquired lock for user: %s", identifier)
-        allowed_to_pass, _msg = user_stats[identifier]
+        allowed_to_pass = rate_limiter.check_limit(identifier)
+        user_stats[identifier] = (
+            allowed_to_pass,
+            "OK" if allowed_to_pass else "Exceed Rate Limit",
+        )
         if not allowed_to_pass:
-            await reply(message, _msg)
-            logger.info("Released lock for user: %s", identifier)
             return
+
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
         umemory = chat_memory.get(identifier, None)
         if umemory is None:
@@ -845,6 +852,11 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
             logger.info("Released lock for user: %s", identifier)
             return
 
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
+
         tlg_msg = await message.reply_text(
             "<b>Progress</b>: <i>START</i>", parse_mode=ParseMode.HTML
         )
@@ -862,7 +874,7 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         assert uprofile is not None
 
         output_string, updated_memory, updated_profile = await call_chat_llm(
-            uprofile, umemory, prompt, tlg_msg
+            uprofile, umemory, prompt, tlg_msg, llm_factory
         )
         user_sql3_table.set(identifier, updated_profile)
         chat_memory[identifier] = updated_memory
@@ -872,7 +884,7 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
 
 
 async def photo_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, user_stats
+    global chat_memory, user_locks, user_stats, main_vdb, web_db
 
     if context.user_data.get("access", None) == "Unauthorized Access":
         return None
@@ -891,6 +903,11 @@ async def photo_handler(update: Update, context: CallbackContext):
             await reply(message, _msg)
             logger.info("Released lock for user: %s", identifier)
             return
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
 
         tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
 
@@ -934,7 +951,9 @@ async def photo_handler(update: Update, context: CallbackContext):
         if message.caption:
             prompt += f"\nCaption={message.caption}"
 
-        response_tuple = await call_chat_llm(updated_profile, umemory, prompt, tlg_msg)
+        response_tuple = await call_chat_llm(
+            updated_profile, umemory, prompt, tlg_msg, llm_factory
+        )
         output_string, updated_memory, updated_profile = response_tuple
         # Leaving
         user_sql3_table.set(identifier, updated_profile)
@@ -945,7 +964,7 @@ async def photo_handler(update: Update, context: CallbackContext):
 
 
 async def voice_handler(update: Update, context: CallbackContext) -> None:
-    global chat_memory, user_locks, user_stats
+    global chat_memory, user_locks, user_stats, main_vdb, web_db
 
     if context.user_data.get("access", None) == "Unauthorized Access":
         return None
@@ -964,6 +983,11 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
             await reply(message, _msg)
             logger.info("Released lock for user: %s", identifier)
             return
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
 
         umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
         if umemory is None:
@@ -985,7 +1009,9 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         assert uprofile is not None
 
         tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
-        chat_resp_tuple = await call_chat_llm(uprofile, umemory, prompt, tlg_msg)
+        chat_resp_tuple = await call_chat_llm(
+            uprofile, umemory, prompt, tlg_msg, llm_factory
+        )
         output_string, updated_memory, updated_profile = chat_resp_tuple
         user_sql3_table.set(identifier, updated_profile)
         chat_memory[identifier] = updated_memory
@@ -1032,7 +1058,19 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
     ulock = get_user_lock(identifier)
 
     async with ulock:
+        # logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
         await reply(message, "COPY")
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
 
         umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
         if umemory is None:
@@ -1084,9 +1122,6 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         e_row = sys_sql3_table.get("embedding")
         content: str = await loader.load_async(export_path)
-        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
-            persist=True, persist_directory=f"/temp/vect/{namespace}"
-        )
         assert e_row["provider"] == "local"
         encoder = OllamaEncoder(myconfig.OLLAMA_HOST, model_name=e_row["model_name"])
         K = max(len(content) // min(encoder.ctx_length, 400), 1)
