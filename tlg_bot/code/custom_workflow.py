@@ -36,7 +36,7 @@ async def find_best_agent(
 
         agent_object = {
             "name": character,
-            "system_prompt": CHARACTER[character]["system_prompt"],
+            "profile": CHARACTER[character]["profile"],
         }
         t = CHARACTER[character].get("tools", None)
         # heavily rely on the tool name, no further description here.
