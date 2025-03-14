@@ -583,7 +583,7 @@ class JITChatCompletionAgent(Tool):
 
         # Load parameters
         params = json.loads(params)
-        logger.warning("GeminiSmartTool: %s", params)
+        logger.warning("JITChatCompletionAgent: %s", params)
         system_prompt = params.get("system_prompt", None)
         question_or_task = params.get("question_or_task", None)
 
@@ -597,7 +597,9 @@ class JITChatCompletionAgent(Tool):
 
             return "\n".join(output_strings)
         except Exception as e:
-            logger.error("GeminiSmartTool: %s", str(e), exc_info=True, stack_info=True)
+            logger.error(
+                "JITChatCompletionAgent: %s", str(e), exc_info=True, stack_info=True
+            )
             return f"Status=Failed. Reason={str(e)}"
 
     def run(self, params: str) -> str:
@@ -608,7 +610,7 @@ class JITChatCompletionAgent(Tool):
 
         # Load parameters
         params = json.loads(params)
-        logger.warning("GeminiSmartTool: %s", params)
+        logger.warning("JITChatCompletionAgent: %s", params)
 
         system_prompt = params.get("system_prompt", None)
         question_or_task = params.get("question_or_task", None)
@@ -623,7 +625,9 @@ class JITChatCompletionAgent(Tool):
 
             return "\n".join(output_strings)
         except Exception as e:
-            logger.error("GeminiSmartTool: %s", str(e), exc_info=True, stack_info=True)
+            logger.error(
+                "JITChatCompletionAgent: %s", str(e), exc_info=True, stack_info=True
+            )
             return f"Status=Failed. Reason={str(e)}"
 
 
