@@ -1045,6 +1045,7 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         f_name = message.document.file_name
         # assert f_ext == f_name.split(".")[-1], f"{f_ext} != {f_name.split('.')[-1]}"
         export_path = f"{namespace}/{f_name}"
+        is_new_upload = not os.path.exists(export_path)
         await store_to_drive(fid, export_path, context, overwrite=True)
 
         db = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
@@ -1099,11 +1100,18 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         cm = ChromaMemory(vdb=user_vdb, encoder=encoder, chunker=chunker)
         added = False
         try:
-            cm.add(
-                document_string=content,
-                identifier=f_name,
-                metadata={"mime_type": message.document.mime_type},
-            )
+            if is_new_upload:
+                cm.add(
+                    document_string=content,
+                    identifier=f_name,
+                    metadata={"mime_type": message.document.mime_type},
+                )
+            else:
+                cm.update(
+                    identifier=f_name,
+                    document_string=content,
+                    metadata={"mime_type": message.document.mime_type},
+                )
             added = True
         except ValueError as ve:
             logger.error("Add data to ChromaMemory: FAILED.\n%s", str(ve))
