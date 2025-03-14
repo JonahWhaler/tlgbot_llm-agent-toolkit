@@ -66,7 +66,7 @@ async def find_best_agent(
         logger.info("Pick %s. Reason: %s", best_agent, reason)
         return best_agent, usage
     except json.JSONDecodeError:
-        return DEFAULT_CHARACTER
+        return DEFAULT_CHARACTER, usage
 
 
 async def update_memory(
