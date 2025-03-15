@@ -64,6 +64,9 @@ def run_bot(bot: Application) -> None:
         CommandHandler("vision_models", handlers.show_vision_model_menu), group=1
     )
     bot.add_handler(
+        CommandHandler("delete_file", handlers.delete_file_handler), group=1
+    )
+    bot.add_handler(
         CommandHandler("system_chat_models", sa_handlers.show_chat_model_menu),
         group=1,
     )
