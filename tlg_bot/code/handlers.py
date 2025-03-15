@@ -1134,7 +1134,7 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         MsWordLoader,
         ImageToTextLoader,
     )
-    from llm_agent_toolkit.encoder.local import OllamaEncoder
+    from llm_agent_toolkit.encoder import OllamaEncoder, OpenAIEncoder
     from llm_agent_toolkit.memory import ChromaMemory
     from llm_agent_toolkit.chunkers import SemanticChunker
 
@@ -1212,6 +1212,20 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         e_row = sys_sql3_table.get("embedding")
         content: str = await loader.load_async(export_path)
+        if e_row["provider"] == "local":
+            encoder = OllamaEncoder(
+                myconfig.OLLAMA_HOST, model_name=e_row["model_name"]
+            )
+        elif e_row["provider"] == "openai":
+            encoder = OpenAIEncoder(
+                model_name=e_row["model_name"], dimension=e_row["dimension"]
+            )
+        else:
+            # encoder = TransformerEncoder(
+            #     model_name=e_row["model_name"], directory="/temp"
+            # )
+            raise RuntimeError("Selected unsupported embedding provider.")
+
         K = max(len(content) // min(encoder.ctx_length, 600), 1)
         chunker_config = {
             "K": K,
