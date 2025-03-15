@@ -252,6 +252,18 @@ async def call_chat_llm(
     return output_string, memory, profile
 
 
+def remove_related_to_file(mem: ShortTermMemory, file_prefix: str) -> ShortTermMemory:
+    new_mem = ShortTermMemory(max_entry=myconfig.MEMORY_LEN + 5)
+
+    for conv in mem.to_list():
+        if conv["role"] == "user" and conv["content"].startswith(file_prefix):
+            logger.warning("SKIP %s", conv["content"])
+            continue
+        new_mem.push(conv)
+
+    return new_mem
+
+
 #### Commands ####
 
 
@@ -820,6 +832,86 @@ async def show_usage(update: Update, context: CallbackContext) -> None:
         await reply(message, "\n".join(output_strings))
 
     logger.info("Released lock for user: %s", identifier)
+
+
+async def delete_file_handler(update: Update, context: CallbackContext) -> None:
+    from llm_agent_toolkit.encoder import OllamaEncoder, OpenAIEncoder
+    from llm_agent_toolkit.chunkers import FixedGroupChunker
+    from llm_agent_toolkit.memory import ChromaMemory
+
+    global user_stats, chat_memory
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    identifier: str = format_identifier(message.chat.id)
+    ulock = get_user_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
+        reply_to_message: Optional[telegram.Message] = getattr(
+            message, "reply_to_message", None
+        )
+        if reply_to_message is None:
+            await reply(message, "Please REPLY to a specific file")
+            return None
+
+        target_document: Optional[telegram.Document] = getattr(
+            reply_to_message, "document", None
+        )
+        if target_document is None:
+            await reply(message, "Please REPLY to a specific file")
+            return None
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        e_row = sys_sql3_table.get("embedding")
+        if e_row["provider"] == "local":
+            encoder = OllamaEncoder(
+                myconfig.OLLAMA_HOST, model_name=e_row["model_name"]
+            )
+        elif e_row["provider"] == "openai":
+            encoder = OpenAIEncoder(
+                model_name=e_row["model_name"], dimension=e_row["dimension"]
+            )
+        else:
+            # encoder = TransformerEncoder(
+            #     model_name=e_row["model_name"], directory="/temp"
+            # )
+            raise RuntimeError("Selected unsupported embedding provider.")
+
+        chunker_config = {"K": 1}
+        chunker = FixedGroupChunker(config=chunker_config)
+        cm = ChromaMemory(vdb=user_vdb, encoder=encoder, chunker=chunker)
+
+        try:
+            cm.delete(identifier=target_document.file_name)
+            umemory = chat_memory.get(identifier, None)
+            chat_memory[identifier] = remove_related_to_file(
+                umemory, target_document.file_name
+            )
+            await reply(message, "File has been deleted.")
+        except Exception as e:
+            logger.error(
+                "Fail to delele file %s: %s",
+                target_document.file_name,
+                str(e),
+                exc_info=True,
+                stack_info=True,
+            )
+            await reply(message, "Failed to delete file.")
+
+        return None
 
 
 #### Inputs ####
