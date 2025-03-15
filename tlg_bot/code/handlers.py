@@ -1264,7 +1264,7 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         )
         file_summary = responses[-1]["content"]
 
-        umemory.push({"role": "user", "content": f"File Summary:\n{file_summary}"})
+        umemory.push({"role": "user", "content": f"{f_name}:\n{file_summary}"})
         chat_memory[identifier] = umemory
 
         logger.info("Generated %d responses.", len(responses))
