@@ -1212,11 +1212,9 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         e_row = sys_sql3_table.get("embedding")
         content: str = await loader.load_async(export_path)
-        assert e_row["provider"] == "local"
-        encoder = OllamaEncoder(myconfig.OLLAMA_HOST, model_name=e_row["model_name"])
-        K = max(len(content) // min(encoder.ctx_length, 400), 1)
+        K = max(len(content) // min(encoder.ctx_length, 600), 1)
         chunker_config = {
-            "K": K * 2,
+            "K": K,
             "MAX_ITERATION": K * 5,
             "update_rate": 0.1,
             "min_coverage": 0.95,
