@@ -1157,8 +1157,6 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
             logger.info("Released lock for user: %s", identifier)
             return
 
-        await reply(message, "COPY")
-
         user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
             persist=True, persist_directory=f"/temp/vect/{identifier}"
         )
