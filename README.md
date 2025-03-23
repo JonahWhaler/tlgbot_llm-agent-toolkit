@@ -20,7 +20,7 @@ I build this project to showcase the functionality and versability of my python 
 | Gemini Support           | :rocket: | v1.0.0 [Text, Vision]                                                                                                |
 | Local Whisper            | :rocket: | openai-whisper==20240930                                                                                             |
 | Rate Limiting            | :rocket: | Basic rate limiting using [pygrl](https://github.com/JonahWhaler/rate-limiter)                                       |
-| Personal Vector Memory   | :hammer: | Maintain file content embeddings in a Vector Memory [Add \| Update \| Query \|Delete] to support RAG                 |
+| Personal Vector Memory   | :rocket: | Maintain file content embeddings in a Vector Memory [Add \| Update \| Query \|Delete] to support RAG                 |
 | Voice Response           | :brain:  | Reply to user with voices                                                                                            |
 | Anthropic Support        | :brain:  |                                                                                                                      |
 | Image Generation         | :brain:  |                                                                                                                      |
