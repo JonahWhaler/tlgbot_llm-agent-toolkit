@@ -22,8 +22,13 @@ logger = logging.getLogger(__name__)
 
 class LLMFactory:
 
-    def __init__(self, vdb: chromadb.ClientAPI, webcache: WebCache):
-        self.tool_factory = ToolFactory(vdb=vdb, web_db=webcache)
+    def __init__(
+        self,
+        vdb: chromadb.ClientAPI,
+        webcache: WebCache,
+        user_vdb: chromadb.ClientAPI | None = None,
+    ):
+        self.tool_factory = ToolFactory(vdb=vdb, web_db=webcache, user_vdb=user_vdb)
 
     def create_chat_llm(
         self,
@@ -178,16 +183,25 @@ class LLMFactory:
         )
         image_interpreter: ImageInterpreter | None
         if platform == "ollama":
+            if local.OllamaCore.csv_path is None:
+                local.OllamaCore.load_csv("/config/ollama.csv")
+
             image_interpreter = local.Image_to_Text_SO(
                 connection_string=OLLAMA_HOST,
                 system_prompt=system_prompt,
                 config=config,
             )
         elif platform == "gemini":
+            if gemini.GeminiCore.csv_path is None:
+                gemini.GeminiCore.load_csv("/config/gemini.csv")
+
             image_interpreter = gemini.GMN_StructuredOutput_Core(
                 system_prompt=system_prompt, config=config
             )
         else:  # platform == "openai":
+            if open_ai.OpenAICore.csv_path is None:
+                open_ai.OpenAICore.load_csv("/config/openai.csv")
+
             image_interpreter = open_ai.OAI_StructuredOutput_Core(
                 system_prompt=system_prompt, config=config
             )

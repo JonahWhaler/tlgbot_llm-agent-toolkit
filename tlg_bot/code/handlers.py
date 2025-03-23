@@ -53,7 +53,6 @@ main_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
     persist=True, persist_directory="/temp/vect"
 )
 web_db = WebCache(ttl=600, maxsize=128)
-llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
 
 #### Workflows ####
@@ -177,10 +176,12 @@ async def call_llm(
 
 
 async def call_chat_llm(
-    profile: dict, memory: ShortTermMemory, prompt: str, tlg_msg: telegram.Message
+    profile: dict,
+    memory: ShortTermMemory,
+    prompt: str,
+    tlg_msg: telegram.Message,
+    llm_factory: LLMFactory,
 ) -> tuple[str, ShortTermMemory, dict]:
-    global llm_factory
-
     logger.info("Executing call_chat_llm")
     platform = profile["platform_t2t"]
     model_name = profile["model_t2t"]
@@ -251,6 +252,18 @@ async def call_chat_llm(
     return output_string, memory, profile
 
 
+def remove_related_to_file(mem: ShortTermMemory, file_prefix: str) -> ShortTermMemory:
+    new_mem = ShortTermMemory(max_entry=myconfig.MEMORY_LEN + 5)
+
+    for conv in mem.to_list():
+        if conv["role"] == "user" and conv["content"].startswith(file_prefix):
+            logger.warning("SKIP %s", conv["content"])
+            continue
+        new_mem.push(conv)
+
+    return new_mem
+
+
 #### Commands ####
 
 
@@ -258,7 +271,7 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
     """
     Intercepts messages
     """
-    global chat_memory, rate_limiter, user_stats, llm_factory
+    global chat_memory, rate_limiter, user_stats, main_vdb, web_db
     # logger = logging.getLogger(__name__)
     logger.info("Middleware => Update: %s", update)
     # Filter out Non-user updates
@@ -286,6 +299,8 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         )
         if not allowed_to_pass:
             return
+
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
         token_usage = None
         user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
@@ -706,7 +721,8 @@ class CompressContent(BaseModel):
 
 
 async def compress_memory_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, user_stats
+    global chat_memory, user_locks, user_stats, main_vdb, web_db
+
     if context.user_data.get("access", None) == "Unauthorized Access":
         return None
 
@@ -718,12 +734,15 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
 
     ulock = get_user_lock(identifier)
     async with ulock:
-        logger.info("Acquired lock for user: %s", identifier)
-        allowed_to_pass, _msg = user_stats[identifier]
+        allowed_to_pass = rate_limiter.check_limit(identifier)
+        user_stats[identifier] = (
+            allowed_to_pass,
+            "OK" if allowed_to_pass else "Exceed Rate Limit",
+        )
         if not allowed_to_pass:
-            await reply(message, _msg)
-            logger.info("Released lock for user: %s", identifier)
             return
+
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
 
         umemory = chat_memory.get(identifier, None)
         if umemory is None:
@@ -815,6 +834,86 @@ async def show_usage(update: Update, context: CallbackContext) -> None:
     logger.info("Released lock for user: %s", identifier)
 
 
+async def delete_file_handler(update: Update, context: CallbackContext) -> None:
+    from llm_agent_toolkit.encoder import OllamaEncoder, OpenAIEncoder
+    from llm_agent_toolkit.chunkers import FixedGroupChunker
+    from llm_agent_toolkit.memory import ChromaMemory
+
+    global user_stats, chat_memory
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    identifier: str = format_identifier(message.chat.id)
+    ulock = get_user_lock(identifier)
+    async with ulock:
+        logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
+        reply_to_message: Optional[telegram.Message] = getattr(
+            message, "reply_to_message", None
+        )
+        if reply_to_message is None:
+            await reply(message, "Please REPLY to a specific file")
+            return None
+
+        target_document: Optional[telegram.Document] = getattr(
+            reply_to_message, "document", None
+        )
+        if target_document is None:
+            await reply(message, "Please REPLY to a specific file")
+            return None
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        e_row = sys_sql3_table.get("embedding")
+        if e_row["provider"] == "local":
+            encoder = OllamaEncoder(
+                myconfig.OLLAMA_HOST, model_name=e_row["model_name"]
+            )
+        elif e_row["provider"] == "openai":
+            encoder = OpenAIEncoder(
+                model_name=e_row["model_name"], dimension=e_row["dimension"]
+            )
+        else:
+            # encoder = TransformerEncoder(
+            #     model_name=e_row["model_name"], directory="/temp"
+            # )
+            raise RuntimeError("Selected unsupported embedding provider.")
+
+        chunker_config = {"K": 1}
+        chunker = FixedGroupChunker(config=chunker_config)
+        cm = ChromaMemory(vdb=user_vdb, encoder=encoder, chunker=chunker)
+
+        try:
+            cm.delete(identifier=target_document.file_name)
+            umemory = chat_memory.get(identifier, None)
+            chat_memory[identifier] = remove_related_to_file(
+                umemory, target_document.file_name
+            )
+            await reply(message, "File has been deleted.")
+        except Exception as e:
+            logger.error(
+                "Fail to delele file %s: %s",
+                target_document.file_name,
+                str(e),
+                exc_info=True,
+                stack_info=True,
+            )
+            await reply(message, "Failed to delete file.")
+
+        return None
+
+
 #### Inputs ####
 
 
@@ -845,6 +944,11 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
             logger.info("Released lock for user: %s", identifier)
             return
 
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
+
         tlg_msg = await message.reply_text(
             "<b>Progress</b>: <i>START</i>", parse_mode=ParseMode.HTML
         )
@@ -862,7 +966,7 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         assert uprofile is not None
 
         output_string, updated_memory, updated_profile = await call_chat_llm(
-            uprofile, umemory, prompt, tlg_msg
+            uprofile, umemory, prompt, tlg_msg, llm_factory
         )
         user_sql3_table.set(identifier, updated_profile)
         chat_memory[identifier] = updated_memory
@@ -872,7 +976,7 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
 
 
 async def photo_handler(update: Update, context: CallbackContext):
-    global chat_memory, user_locks, user_stats
+    global chat_memory, user_locks, user_stats, main_vdb, web_db
 
     if context.user_data.get("access", None) == "Unauthorized Access":
         return None
@@ -891,6 +995,11 @@ async def photo_handler(update: Update, context: CallbackContext):
             await reply(message, _msg)
             logger.info("Released lock for user: %s", identifier)
             return
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
 
         tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
 
@@ -934,7 +1043,9 @@ async def photo_handler(update: Update, context: CallbackContext):
         if message.caption:
             prompt += f"\nCaption={message.caption}"
 
-        response_tuple = await call_chat_llm(updated_profile, umemory, prompt, tlg_msg)
+        response_tuple = await call_chat_llm(
+            updated_profile, umemory, prompt, tlg_msg, llm_factory
+        )
         output_string, updated_memory, updated_profile = response_tuple
         # Leaving
         user_sql3_table.set(identifier, updated_profile)
@@ -945,7 +1056,7 @@ async def photo_handler(update: Update, context: CallbackContext):
 
 
 async def voice_handler(update: Update, context: CallbackContext) -> None:
-    global chat_memory, user_locks, user_stats
+    global chat_memory, user_locks, user_stats, main_vdb, web_db
 
     if context.user_data.get("access", None) == "Unauthorized Access":
         return None
@@ -964,6 +1075,11 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
             await reply(message, _msg)
             logger.info("Released lock for user: %s", identifier)
             return
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
 
         umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
         if umemory is None:
@@ -985,7 +1101,9 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         assert uprofile is not None
 
         tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
-        chat_resp_tuple = await call_chat_llm(uprofile, umemory, prompt, tlg_msg)
+        chat_resp_tuple = await call_chat_llm(
+            uprofile, umemory, prompt, tlg_msg, llm_factory
+        )
         output_string, updated_memory, updated_profile = chat_resp_tuple
         user_sql3_table.set(identifier, updated_profile)
         chat_memory[identifier] = updated_memory
@@ -1010,8 +1128,13 @@ async def audio_handler(update: Update, context: CallbackContext) -> None:
 
 
 async def document_handler(update: Update, context: CallbackContext) -> None:
-    from llm_agent_toolkit.loader import TextLoader, PDFLoader, MsWordLoader
-    from llm_agent_toolkit.encoder.local import OllamaEncoder
+    from llm_agent_toolkit.loader import (
+        TextLoader,
+        PDFLoader,
+        MsWordLoader,
+        ImageToTextLoader,
+    )
+    from llm_agent_toolkit.encoder import OllamaEncoder, OpenAIEncoder
     from llm_agent_toolkit.memory import ChromaMemory
     from llm_agent_toolkit.chunkers import SemanticChunker
 
@@ -1027,21 +1150,39 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
     ulock = get_user_lock(identifier)
 
     async with ulock:
-        await reply(message, "COPY")
+        # logger.info("Acquired lock for user: %s", identifier)
+        allowed_to_pass, _msg = user_stats[identifier]
+        if not allowed_to_pass:
+            await reply(message, _msg)
+            logger.info("Released lock for user: %s", identifier)
+            return
+
+        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
+            persist=True, persist_directory=f"/temp/vect/{identifier}"
+        )
+        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
+
+        umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
+        if umemory is None:
+            raise ValueError("Memory is None.")
+
         namespace = f"/temp/{identifier}"
         fid = message.document.file_id
 
         f_ext = map_file_extension(message.document.mime_type)
         f_name = message.document.file_name
-        assert f_ext == f_name.split(".")[-1]
+        # assert f_ext == f_name.split(".")[-1], f"{f_ext} != {f_name.split('.')[-1]}"
         export_path = f"{namespace}/{f_name}"
+        is_new_upload = not os.path.exists(export_path)
         await store_to_drive(fid, export_path, context, overwrite=True)
 
+        db = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        uprofile = db.get(identifier)
+
+        character = "speed_reader"
         if f_ext in ["txt", "md"]:
             loader = TextLoader()
         else:
-            db = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
-            uprofile = db.get(identifier)
             assert uprofile is not None
             ii = llm_factory.create_image_interpreter(
                 platform=uprofile["platform_i2t"],
@@ -1049,7 +1190,15 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
                 system_prompt=myconfig.CHARACTER["seer"]["system_prompt"],
                 temperature=myconfig.CHARACTER["seer"]["temperature"],
             )
-            if f_ext == "pdf":
+            if f_ext in ["jpg", "png", "jpeg"]:
+                character = "general"
+                loader = ImageToTextLoader(
+                    image_interpreter=ii,
+                    prompt=(
+                        message.caption if message.caption else "Describe the image."
+                    ),
+                )
+            elif f_ext == "pdf":
                 loader = PDFLoader(
                     text_only=False, tmp_directory=namespace, image_interpreter=ii
                 )
@@ -1063,14 +1212,23 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         e_row = sys_sql3_table.get("embedding")
         content: str = await loader.load_async(export_path)
-        user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
-            persist=True, persist_directory=f"/temp/vect/{namespace}"
-        )
-        assert e_row["provider"] == "local"
-        encoder = OllamaEncoder(myconfig.OLLAMA_HOST, model_name=e_row["model_name"])
-        K = max(len(content) // encoder.ctx_length, 1)
+        if e_row["provider"] == "local":
+            encoder = OllamaEncoder(
+                myconfig.OLLAMA_HOST, model_name=e_row["model_name"]
+            )
+        elif e_row["provider"] == "openai":
+            encoder = OpenAIEncoder(
+                model_name=e_row["model_name"], dimension=e_row["dimension"]
+            )
+        else:
+            # encoder = TransformerEncoder(
+            #     model_name=e_row["model_name"], directory="/temp"
+            # )
+            raise RuntimeError("Selected unsupported embedding provider.")
+
+        K = max(len(content) // min(encoder.ctx_length, 600), 1)
         chunker_config = {
-            "K": K * 2,
+            "K": K,
             "MAX_ITERATION": K * 5,
             "update_rate": 0.1,
             "min_coverage": 0.95,
@@ -1079,18 +1237,56 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         cm = ChromaMemory(vdb=user_vdb, encoder=encoder, chunker=chunker)
         added = False
         try:
-            cm.add(
-                document_string=content,
-                identifier=f_name,
-                metadata={"mime_type": message.document.mime_type},
-            )
+            if is_new_upload:
+                cm.add(
+                    document_string=content,
+                    identifier=f_name,
+                    metadata={"mime_type": message.document.mime_type},
+                )
+            else:
+                cm.update(
+                    identifier=f_name,
+                    document_string=content,
+                    metadata={"mime_type": message.document.mime_type},
+                )
             added = True
         except ValueError as ve:
             logger.error("Add data to ChromaMemory: FAILED.\n%s", str(ve))
-        if added:
-            output_string = "Add data to ChromaMemory: *DONE*"
-        else:
+        if not added:
             output_string = "Add data to ChromaMemory: *FAILED*"
+            await reply(message, output_string)
+            return None
+
+        llm = llm_factory.create_chat_llm(
+            uprofile["platform_t2t"], uprofile["model_t2t"], character, False
+        )
+        prompt = """
+        ---
+        CONTENT START
+        ${{CONTENT}}
+        CONTENT END
+        ---
+        """
+        content_window = int(min(llm.context_length * 0.75, 20_000))
+        templated_prompt = prompt.replace("${{CONTENT}}", content[:content_window])
+        responses, usage = await call_llm(
+            llm,
+            prompt=templated_prompt,
+            context=None,
+            mode=ResponseMode.DEFAULT,
+            response_format=None,
+        )
+        file_summary = responses[-1]["content"]
+
+        umemory.push({"role": "user", "content": f"{f_name}:\n{file_summary}"})
+        chat_memory[identifier] = umemory
+
+        logger.info("Generated %d responses.", len(responses))
+        uprofile["usage"][uprofile["platform_t2t"]] += usage.total_tokens
+        db.set(identifier, uprofile)
+        character_name = myconfig.CHARACTER[character]["name"]
+        model_name = uprofile["model_t2t"]
+        output_string = f"**{character_name}** [*{model_name}*]:\n{file_summary}"
         await reply(message, output_string)
 
 
@@ -1111,6 +1307,14 @@ async def attachment_handler(update: Update, context: CallbackContext) -> None:
         return None
 
     if message.document:
+        f_ext = map_file_extension(message.document.mime_type)
+        # Excel, CSV, JSON, and other structured data files should be handled differently
+
+        # Focus on text content first
+        if f_ext not in ["pdf", "docx", "txt", "md", "html", "jpg", "png", "jpeg"]:
+            logger.warning("Unsupported File Extension: %s", f_ext)
+            return None
+
         logger.info("Redirect -> document_handler")
         await document_handler(update, context)
         return None

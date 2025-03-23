@@ -583,7 +583,7 @@ class JITChatCompletionAgent(Tool):
 
         # Load parameters
         params = json.loads(params)
-        logger.warning("GeminiSmartTool: %s", params)
+        logger.warning("JITChatCompletionAgent: %s", params)
         system_prompt = params.get("system_prompt", None)
         question_or_task = params.get("question_or_task", None)
 
@@ -597,7 +597,9 @@ class JITChatCompletionAgent(Tool):
 
             return "\n".join(output_strings)
         except Exception as e:
-            logger.error("GeminiSmartTool: %s", str(e), exc_info=True, stack_info=True)
+            logger.error(
+                "JITChatCompletionAgent: %s", str(e), exc_info=True, stack_info=True
+            )
             return f"Status=Failed. Reason={str(e)}"
 
     def run(self, params: str) -> str:
@@ -608,7 +610,7 @@ class JITChatCompletionAgent(Tool):
 
         # Load parameters
         params = json.loads(params)
-        logger.warning("GeminiSmartTool: %s", params)
+        logger.warning("JITChatCompletionAgent: %s", params)
 
         system_prompt = params.get("system_prompt", None)
         question_or_task = params.get("question_or_task", None)
@@ -623,8 +625,88 @@ class JITChatCompletionAgent(Tool):
 
             return "\n".join(output_strings)
         except Exception as e:
-            logger.error("GeminiSmartTool: %s", str(e), exc_info=True, stack_info=True)
+            logger.error(
+                "JITChatCompletionAgent: %s", str(e), exc_info=True, stack_info=True
+            )
             return f"Status=Failed. Reason={str(e)}"
+
+
+class PersonalKnowledgeBaseTool(Tool):
+    def __init__(self, user_vdb: chromadb.ClientAPI):
+        Tool.__init__(self, PersonalKnowledgeBaseTool.function_info(), True)
+        self.user_vdb = user_vdb
+
+    @staticmethod
+    def function_info():
+        description = """
+        Use this tool to search the personal knowledge base.
+        All files uploaded by the user are stored here.
+
+        Pass in the query keyword and this tool will return you the relevant chunks.
+        """
+        return FunctionInfo(
+            name="PersonalKnowledgeBaseTool",
+            description=description,
+            parameters=FunctionParameters(
+                properties=[
+                    FunctionProperty(
+                        name="query",
+                        type=FunctionPropertyType.STRING,
+                        description="The query keyword. Please avoid vague and short keyword.",
+                    ),
+                ],
+                type="object",
+                required=["query"],
+            ),
+        )
+
+    async def run_async(self, params: str) -> str:
+        from llm_agent_toolkit.encoder import OllamaEncoder
+        from llm_agent_toolkit.chunkers import FixedGroupChunker
+
+        from mystorage import SQLite3_Storage
+
+        if not self.validate(params=params):
+            return {"error": "Invalid parameters for PersonalKnowledgeBaseTool"}
+
+        # Load parameters
+        params = json.loads(params)
+
+        query = params.get("query", None)
+
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        e_row = sys_sql3_table.get("embedding")
+        assert e_row["provider"] == "local"
+        encoder = OllamaEncoder(myconfig.OLLAMA_HOST, model_name=e_row["model_name"])
+        chunker_config = {"K": 1}
+        chunker = FixedGroupChunker(config=chunker_config)
+        cm = ChromaMemory(vdb=self.user_vdb, encoder=encoder, chunker=chunker)
+        response = cm.query(query_string=query, return_n=10, output_types=["documents"])
+        return json.dumps(response, ensure_ascii=False)
+
+    def run(self, params: str) -> str:
+        from llm_agent_toolkit.encoder import OllamaEncoder
+        from llm_agent_toolkit.chunkers import FixedGroupChunker
+
+        from mystorage import SQLite3_Storage
+
+        if not self.validate(params=params):
+            return {"error": "Invalid parameters for PersonalKnowledgeBaseTool"}
+
+        # Load parameters
+        params = json.loads(params)
+
+        query = params.get("query", None)
+
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        e_row = sys_sql3_table.get("embedding")
+        assert e_row["provider"] == "local"
+        encoder = OllamaEncoder(myconfig.OLLAMA_HOST, model_name=e_row["model_name"])
+        chunker_config = {"K": 1}
+        chunker = FixedGroupChunker(config=chunker_config)
+        cm = ChromaMemory(vdb=self.user_vdb, encoder=encoder, chunker=chunker)
+        response = cm.query(query_string=query, return_n=10, output_types=["documents"])
+        return json.dumps(response, ensure_ascii=False)
 
 
 class ToolFactory:
@@ -632,9 +714,11 @@ class ToolFactory:
         self,
         vdb: chromadb.ClientAPI,
         web_db: WebCache,
+        user_vdb: chromadb.ClientAPI | None = None,
     ):
         self.vdb = vdb
         self.web_db = web_db
+        self.user_vdb = user_vdb
 
     def get(self, tool_name: str, llm: Core | None = None) -> Tool | None:
         if tool_name == "current_datetime":
@@ -660,4 +744,7 @@ class ToolFactory:
                 temperature=0.7,
             )
             return JITChatCompletionAgent(config=config)
+        if tool_name == "personal_knowledge_base":
+            assert self.user_vdb is not None
+            return PersonalKnowledgeBaseTool(self.user_vdb)
         return None

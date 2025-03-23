@@ -1,0 +1,16 @@
+t2t:
+  provider: deepseek
+  model_name: deepseek-chat
+
+i2t:
+  provider: gemini
+  model_name: gemini-1.5-flash
+
+a2t:
+  provider: local
+  model_name: tiny
+
+emb:
+  provider: openai
+  model_name: text-embedding-3-small
+  dimension: 512

@@ -218,4 +218,10 @@ def map_file_extension(mime_type: str):
         return "html"
     if mime_type == "text/markdown":
         return "md"
+    if mime_type == "image/png":
+        return "png"
+    if mime_type == "image/jpeg":
+        return "jpeg"
+    if mime_type == "image/jpg":
+        return "jpg"
     return mime_type.split("/")[1]

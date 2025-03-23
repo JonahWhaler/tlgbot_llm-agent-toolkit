@@ -64,6 +64,9 @@ def run_bot(bot: Application) -> None:
         CommandHandler("vision_models", handlers.show_vision_model_menu), group=1
     )
     bot.add_handler(
+        CommandHandler("delete_file", handlers.delete_file_handler), group=1
+    )
+    bot.add_handler(
         CommandHandler("system_chat_models", sa_handlers.show_chat_model_menu),
         group=1,
     )
@@ -226,16 +229,33 @@ def init():
 
     sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
     sys_sql3_table.set(
-        "chat-completion", {"provider": "gemini", "model_name": "gemini-1.5-flash"}
+        "chat-completion",
+        {
+            "provider": myconfig.DEFAULT_MODEL["t2t"]["provider"],
+            "model_name": myconfig.DEFAULT_MODEL["t2t"]["model_name"],
+        },
     )
     sys_sql3_table.set(
-        "image-interpretation", {"provider": "ollama", "model_name": "llava:7b"}
+        "image-interpretation",
+        {
+            "provider": myconfig.DEFAULT_MODEL["i2t"]["provider"],
+            "model_name": myconfig.DEFAULT_MODEL["i2t"]["model_name"],
+        },
     )
     sys_sql3_table.set(
-        "audio-transcription", {"provider": "local", "model_name": "turbo"}
+        "audio-transcription",
+        {
+            "provider": myconfig.DEFAULT_MODEL["a2t"]["provider"],
+            "model_name": myconfig.DEFAULT_MODEL["a2t"]["model_name"],
+        },
     )
     sys_sql3_table.set(
-        "embedding", {"provider": "local", "model_name": "bge-m3:latest"}
+        "embedding",
+        {
+            "provider": myconfig.DEFAULT_MODEL["emb"]["provider"],
+            "model_name": myconfig.DEFAULT_MODEL["emb"]["model_name"],
+            "dimension": myconfig.DEFAULT_MODEL["emb"]["dimension"],
+        },
     )
 
 
