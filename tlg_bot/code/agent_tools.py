@@ -419,7 +419,7 @@ class DDGSmartSearchTool(Tool):
         if len(top_search) == 0:
             return json.dumps({"error": error_message}, ensure_ascii=False)
 
-        web_search_result = json.dumps(top_search, ensure_ascii=False)
+        web_search_result = "\n\n".join(json.dumps(top_search, ensure_ascii=False))
         return web_search_result
 
     def run(self, params: str) -> str:
@@ -432,6 +432,7 @@ class DDGSmartSearchTool(Tool):
         top_n = 5
 
         top_search = []
+        error_message = "Unknown Error"
         with requests.Session() as session:
             with DDGS(headers=self.headers) as ddgs:
                 try:
@@ -497,7 +498,7 @@ class DDGSmartSearchTool(Tool):
         if len(top_search) == 0:
             return json.dumps({"error": error_message}, ensure_ascii=False)
 
-        web_search_result = json.dumps(top_search, ensure_ascii=False)
+        web_search_result = "\n\n".join(json.dumps(top_search, ensure_ascii=False))
         return web_search_result
 
     async def fetch_async(self, session: aiohttp.ClientSession, url: str) -> str | None:
