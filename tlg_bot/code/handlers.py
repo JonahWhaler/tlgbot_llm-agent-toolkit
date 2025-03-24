@@ -324,6 +324,12 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
             and context.user_data.get("access", None) == "Unauthorized Access"
         ):
             context.user_data["access"] = "Granted"
+        elif user_profile["status"] == "denied":
+            context.user_data["access"] = "Unauthorized Access"
+            await context.bot.send_message(
+                chat_id=message.chat.id, text="You have been denied access."
+            )
+            return
 
         register_memory(identifier, force=False)
         register_user(identifier, message.from_user.name, force=False, premium=True)

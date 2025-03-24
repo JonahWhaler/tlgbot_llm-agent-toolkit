@@ -86,6 +86,7 @@ def run_bot(bot: Application) -> None:
     bot.add_handler(
         CommandHandler("allow", sa_handlers.allow_pending_user_handler), group=1
     )
+    bot.add_handler(CommandHandler("deny", sa_handlers.deny_user_handler), group=1)
 
     # Buttons
     bot.add_handler(
