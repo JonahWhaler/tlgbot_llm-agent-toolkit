@@ -1,3 +1,6 @@
+"""
+Module DocString
+"""
 import os
 import logging
 import json
@@ -13,13 +16,27 @@ from llm_agent_toolkit import (
 from llm_agent_toolkit.memory import ChromaMemory
 from llm_agent_toolkit.chunkers import FixedGroupChunker, SemanticChunker
 from llm_agent_toolkit.encoder import OllamaEncoder, OpenAIEncoder
-import myconfig
 
 logger = logging.getLogger(__name__)
 
 
 class TopicQueryTool(Tool):
-    def __init__(self, vdb: chromadb.ClientAPI, title: str, encoder_config: dict):
+    """
+    # Topic Query Tool
+    
+    Notes:
+    - Please prepare all files in /assets/{title}
+    - Only accept text files
+    - Never swap encoder in between
+    """
+
+    def __init__(
+        self,
+        vdb: chromadb.ClientAPI,
+        title: str,
+        encoder_config: dict,
+        num_results: int = 10,
+    ):
         Tool.__init__(self, TopicQueryTool.function_info(title), False)
         if encoder_config["provider"] == "openai":
             encoder = OpenAIEncoder(
@@ -28,9 +45,10 @@ class TopicQueryTool(Tool):
             )
         else:
             encoder = OllamaEncoder(
-                connection_string=myconfig.OLLAMA_HOST,
+                connection_string=os.environ["OLLAMA_HOST"],
                 model_name=encoder_config["model_name"],
             )
+        self.num_results = num_results
         try:
             c = vdb.get_collection(name=title)
             logger.info("Count: %d", c.count())
@@ -51,7 +69,22 @@ class TopicQueryTool(Tool):
             logger.error("Failed to create %s knowledge base.", str(e))
             raise e
 
-    def init(self, vdb, title, encoder: Encoder):
+    def init(self, vdb, title, encoder: Encoder) -> None:
+        """
+        Initializes the knowledge base by processing all files in the specified directory.
+
+        This method reads each file in the "/assets/{title}" directory, computes the
+        appropriate chunk size `K`, and creates chunks of text using either a fixed
+        or semantic chunking strategy. The chunks are then added to the ChromaMemory
+        for the given namespace.
+
+        Args:
+            vdb: The vector database client to use for storing the knowledge base.
+            title: The title of the knowledge base, which is used to locate files and
+                as the namespace for storage.
+            encoder (Encoder): The encoder used to process and encode the text content.
+        """
+
         for file_name in os.listdir(f"/assets/{title}"):
             file_path = f"/assets/{title}/{file_name}"
             logger.info("Loading file: %s", file_path)
@@ -80,7 +113,23 @@ class TopicQueryTool(Tool):
                 ).add(document_string=text)
 
     @staticmethod
-    def function_info(title: str):
+    def function_info(title: str) -> FunctionInfo:
+        """
+        Generates a FunctionInfo object for the TopicQueryTool.
+
+        This static method creates a FunctionInfo instance that describes
+        the TopicQueryTool's capabilities for querying a specific knowledge
+        base given by the title. It includes the tool's name, description,
+        and the required parameters.
+
+        Parameters:
+            None
+
+        Returns:
+            FunctionInfo: An object containing the tool's metadata and expected
+            input parameters.
+        """
+
         description = f"""Query from {title} knowledge base.
         Use this tool to learn/find information related to {title}
         """
@@ -101,19 +150,52 @@ class TopicQueryTool(Tool):
         )
 
     def run(self, params: str) -> str:
-        if not self.validate(params=params):
+        """
+        Run the TopicQueryTool with the given parameters.
+
+        Parameters:
+            params (str): JSON string containing the parameters of the tool.
+
+        Returns:
+            str: JSON string containing the retrieved documents or an error message
+            if the parameters are invalid.
+        """
+        valid, validation_message = self.validate(params=params)
+        if not valid:
             return json.dumps(
-                {"error": "Invalid parameters for TopicQueryTool"},
-                ensure_ascii=True,
+                {
+                    "error": "Invalid parameters for TopicQueryTool",
+                    "detail": validation_message,
+                },
+                ensure_ascii=False,
             )
 
-        params = json.loads(params)
-        query = params.get("query", None)
-
+        params_dict = json.loads(params)
+        query = params_dict.get("query", None)
         response = self.knowledge_base.query(
-            query, return_n=5, output_types=["documents"]
-        )["result"]["documents"]
-        return json.dumps(response, ensure_ascii=False)
+            query, return_n=self.num_results, output_types=["documents"]
+        )
+        documents = response["result"]["documents"]
+        return json.dumps(documents, ensure_ascii=False)
 
     async def run_async(self, params: str) -> str:
+        """
+        Run the TopicQueryTool with the given parameters asynchronously.
+
+        Parameters:
+            params (str): JSON string containing the parameters of the tool.
+
+        Returns:
+            str: JSON string containing the retrieved documents or an error message
+            if the parameters are invalid.
+        """
+        valid, validation_message = self.validate(params=params)
+        if not valid:
+            return json.dumps(
+                {
+                    "error": "Invalid parameters for TopicQueryTool",
+                    "detail": validation_message,
+                },
+                ensure_ascii=False,
+            )
         return self.run(params)
