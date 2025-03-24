@@ -353,6 +353,7 @@ class DDGSmartSearchTool(Tool):
         top_n = 5
 
         top_search = []
+        error_message = "Unknown Error"
         async with aiohttp.ClientSession(headers=self.headers) as session:
             with DDGS(headers=self.headers) as ddgs:
                 try:
@@ -410,10 +411,13 @@ class DDGSmartSearchTool(Tool):
 
                         top_search.append(_r)
                 except Exception as error:
-                    logger.error(error, exc_info=True)
+                    if "202 Ratelimit" in str(error):
+                        error_message = "Rate limit reached."
+                    else:
+                        error_message = str(error)
 
         if len(top_search) == 0:
-            return json.dumps({"error": ""}, ensure_ascii=False)
+            return json.dumps({"error": error_message}, ensure_ascii=False)
 
         web_search_result = json.dumps(top_search, ensure_ascii=False)
         return web_search_result
@@ -485,10 +489,13 @@ class DDGSmartSearchTool(Tool):
 
                         top_search.append(_r)
                 except Exception as error:
-                    logger.error(error, exc_info=True)
+                    if "202 Ratelimit" in str(error):
+                        error_message = "Rate limit reached."
+                    else:
+                        error_message = str(error)
 
         if len(top_search) == 0:
-            return json.dumps({"error": ""}, ensure_ascii=False)
+            return json.dumps({"error": error_message}, ensure_ascii=False)
 
         web_search_result = json.dumps(top_search, ensure_ascii=False)
         return web_search_result
