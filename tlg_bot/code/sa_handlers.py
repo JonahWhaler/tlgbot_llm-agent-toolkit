@@ -345,7 +345,6 @@ async def allow_pending_user_handler(update: Update, context: CallbackContext) -
 
     ulock = get_sa_lock(identifier)
     async with ulock:
-        logger.info("Acquired lock for user: %s", identifier)
         user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
         txts = message.text.split(" ")
         logger.info("txts: %s", txts)
@@ -363,6 +362,44 @@ async def allow_pending_user_handler(update: Update, context: CallbackContext) -
                 output_string = f"Access granted to {uprofile['username']}"
             except Exception as e:
                 logger.error("allow_pending_user_handler: %s", e)
+                output_string = "Invalid ID."
+        else:
+            output_string = "Invalid input."
+        await message.reply_text(text=output_string, parse_mode=ParseMode.HTML)
+
+
+async def deny_user_handler(update: Update, context: CallbackContext) -> None:
+    logger = logging.getLogger(__name__)
+    if context.user_data.get("access", None) == "Unauthorized Access":
+        return None
+
+    message: Optional[telegram.Message] = getattr(update, "message", None)
+    if message is None:
+        return None
+
+    identifier: str = (
+        f"g{message.chat.id}" if message.chat.id < 0 else str(message.chat.id)
+    )
+
+    ulock = get_sa_lock(identifier)
+    async with ulock:
+        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        txts = message.text.split(" ")
+        logger.info("txts: %s", txts)
+        if len(txts) == 2:
+            id_str = txts[1]
+            try:
+                id_int = int(id_str)
+                identifier = format_identifier(id_int)
+                uprofile = user_sql3_table.get(identifier)
+                if uprofile is None:
+                    output_string = "Invalid ID."
+
+                uprofile["status"] = "denied"
+                user_sql3_table.set(identifier, uprofile)
+                output_string = f"Access revoked from {uprofile['username']}"
+            except Exception as e:
+                logger.error("deny_user_handler: %s", e)
                 output_string = "Invalid ID."
         else:
             output_string = "Invalid input."
