@@ -133,7 +133,23 @@ class LLMFactory:
                     system_prompt=system_prompt, config=config
                 )
             else:
-                llm = gemini.Text_to_Text(system_prompt=system_prompt, config=config)
+                tools = CHARACTER[character].get("tools", None)
+                tool_list: list | None = None
+                if tools:
+                    tool_list = []
+                    freeuse_llm = gemini.Text_to_Text(
+                        system_prompt="You are a helpful assistant.",
+                        config=config,
+                    )
+                    for t in tools:
+                        tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                        if tool is None:
+                            raise ValueError(f"Requested tool not found. {t}")
+                        tool_list.append(tool)
+
+                llm = gemini.Text_to_Text_W_Tool(
+                    system_prompt=system_prompt, config=config, tools=tools
+                )
         else:  # platform == "deepseek":
             if structured_output:
                 llm = deep_seek.Text_to_Text_SO(
