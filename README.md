@@ -24,7 +24,7 @@ I build this project to showcase the functionality and versability of my python 
 | Voice Response           | :brain:  | Reply to user with voices                                                                                            |
 | Anthropic Support        | :brain:  |                                                                                                                      |
 | Image Generation         | :brain:  |                                                                                                                      |
-| User Access Control      | :hammer: | Allow system admin to control user's access [Allow \| Suspend]                                                       |
+| User Access Control      | :rocket: | Allow system admin to control user's access [Allow \| Suspend]                                                       |
 | Broadcast                | :brain:  | Allow system admin to push updates to users                                                                          |
 | Content Moderation       | :brain:  | Validate whether user\'s input and LLM\'s responses are compliance to the ethical boundary                           |
 | File Response            | :brain:  | Response to user with file with shareable link                                                                       |
