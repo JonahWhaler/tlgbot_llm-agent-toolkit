@@ -46,7 +46,7 @@ user_locks: dict[str, Lock] = {}  # Cleanup mechanism is needed!
 
 
 rl_storage = BasicStorage()
-rate_limiter = grl(rl_storage, 1, 1, 100)
+rate_limiter = grl(rl_storage, 1, 30, 100)  # maximum 1 request every 30 seconds
 user_stats: dict[str, tuple[bool, str]] = {}  # Cleanup mechanism is needed!
 
 main_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
