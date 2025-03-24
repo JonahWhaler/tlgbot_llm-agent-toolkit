@@ -4,6 +4,7 @@ import logging
 import random
 import json
 import asyncio
+import time
 from datetime import datetime
 import aiohttp
 from duckduckgo_search import DDGS
@@ -90,7 +91,7 @@ class DuckDuckGoSearchTool(Tool):
         top_n = 5
 
         top_search = []
-        with DDGS() as ddgs:
+        with DDGS(headers=self.headers) as ddgs:
             for r in ddgs.text(
                 keywords=query,
                 region=self.region,
@@ -99,7 +100,7 @@ class DuckDuckGoSearchTool(Tool):
             ):
                 top_search.append(r)
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(headers=self.headers) as session:
             tasks = [self.fetch_async(session, r["href"]) for r in top_search]
             search_results = await asyncio.gather(*tasks)
             for r, sr in zip(top_search, search_results):
@@ -119,7 +120,7 @@ class DuckDuckGoSearchTool(Tool):
         top_n = 5
 
         top_search = []
-        with DDGS() as ddgs:
+        with DDGS(headers=self.headers) as ddgs:
             try:
                 for r in ddgs.text(
                     keywords=query,
@@ -142,7 +143,7 @@ class DuckDuckGoSearchTool(Tool):
     async def fetch_async(self, session, url):
         try:
             await asyncio.sleep(self.pause)
-            async with session.get(url, headers=self.headers) as response:
+            async with session.get(url) as response:
                 data = await response.text()
                 soup = BeautifulSoup(data, "html.parser")
                 return self.remove_whitespaces(soup.find("body").text)
@@ -151,6 +152,7 @@ class DuckDuckGoSearchTool(Tool):
 
     def fetch(self, url: str):
         try:
+            time.sleep(self.pause)
             page = requests.get(url=url, headers=self.headers, timeout=2, stream=False)
             soup = BeautifulSoup(page.text, "html.parser")
             body = soup.find("body")
@@ -164,11 +166,11 @@ class DuckDuckGoSearchTool(Tool):
 
     @staticmethod
     def remove_whitespaces(document_content: str) -> str:
-        original_len = len(document_content)
+        # original_len = len(document_content)
         cleaned_text = re.sub(r"\s+", " ", document_content)
         cleaned_text = re.sub(r"\n{3,}", "\n", cleaned_text)
-        updated_len = len(cleaned_text)
-        logger.info("Reduce from %d to %d", original_len, updated_len)
+        # updated_len = len(cleaned_text)
+        # logger.info("Reduce from %d to %d", original_len, updated_len)
         return cleaned_text
 
 
@@ -351,8 +353,8 @@ class DDGSmartSearchTool(Tool):
         top_n = 5
 
         top_search = []
-        async with aiohttp.ClientSession() as session:
-            with DDGS() as ddgs:
+        async with aiohttp.ClientSession(headers=self.headers) as session:
+            with DDGS(headers=self.headers) as ddgs:
                 try:
                     for _r in ddgs.text(
                         keywords=query,
@@ -427,7 +429,7 @@ class DDGSmartSearchTool(Tool):
 
         top_search = []
         with requests.Session() as session:
-            with DDGS() as ddgs:
+            with DDGS(headers=self.headers) as ddgs:
                 try:
                     for _r in ddgs.text(
                         keywords=query,
@@ -499,7 +501,7 @@ class DDGSmartSearchTool(Tool):
                 return cached_content
 
             await asyncio.sleep(self.pause)
-            async with session.get(url, headers=self.headers) as response:
+            async with session.get(url) as response:
                 data = await response.text()
                 soup = BeautifulSoup(data, "html.parser")
                 output_string = self.remove_whitespaces(soup.find("body").text)
@@ -516,6 +518,7 @@ class DDGSmartSearchTool(Tool):
                 logger.info("Load from cache: %s", url)
                 return cached_content
 
+            time.sleep(self.pause)
             page = session.get(url=url, headers=self.headers, timeout=2, stream=False)
             soup = BeautifulSoup(page.text, "html.parser")
             body = soup.find("body")
