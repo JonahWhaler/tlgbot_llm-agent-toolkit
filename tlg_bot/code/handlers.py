@@ -32,6 +32,7 @@ from custom_workflow import (
     update_memory,
     process_audio_input,
     reply,
+    compress_memory,
 )
 from custom_library import store_to_drive, format_identifier, map_file_extension
 from transcriber import TranscriberFactory
@@ -46,7 +47,7 @@ user_locks: dict[str, Lock] = {}  # Cleanup mechanism is needed!
 
 
 rl_storage = BasicStorage()
-rate_limiter = grl(rl_storage, 1, 30, 100)  # maximum 1 request every 30 seconds
+rate_limiter = grl(rl_storage, 1, 1, 100)  # maximum 1 request every 30 seconds
 user_stats: dict[str, tuple[bool, str]] = {}  # Cleanup mechanism is needed!
 
 main_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
@@ -238,11 +239,15 @@ async def call_chat_llm(
         parse_mode=ParseMode.HTML,
     )
     profile["usage"][platform] += usage.total_tokens
-
     logger.info("Generated %d responses.", len(responses))
     for response in responses:
         # logger.info("\nResponse: %s", response["content"])
         memory.push({"role": "assistant", "content": response["content"]})
+
+    if usage.input_tokens > 32_000:
+        llm = llm_factory.create_chat_llm(platform, model_name, "compressor", False)
+        memory, compress_usage = await compress_memory(llm, memory)
+        profile["usage"][platform] += compress_usage.total_tokens
 
     final_response = responses[-1]
     character_name = myconfig.CHARACTER[character]["name"]
