@@ -296,3 +296,39 @@ async def reply(
                 formatted_chunk, parse_mode=ParseMode.MARKDOWN_V2
             )
     return msg
+
+
+async def compress_memory(
+    llm: Core,
+    memory: ShortTermMemory,
+) -> tuple[ShortTermMemory, TokenUsage]:
+    usage = None
+    memories = memory.to_list()
+    memory.clear()
+
+    context_strings = []
+    for mem in memories:
+        context_strings.append(" - " + mem["role"] + ": " + mem["content"])
+    conv_history = "\n".join(context_strings)
+
+    prompt = f"""
+    Compress the past conversations.
+
+    ---
+    {conv_history}
+    ---
+    """
+
+    try:
+        responses, usage = await llm.run_async(query=prompt, context=None)
+        memory.push({"role": "assistant", "content": responses[-1]["content"]})
+        return memory, usage
+    except Exception as e:
+        logger.error("compress memory: %s", e)
+        # Reduce the oldest
+        for mem in memories[1:]:
+            memory.push(mem)
+
+        if usage is None:
+            usage = TokenUsage(input_tokens=0, output_tokens=0)
+        return memory, usage
