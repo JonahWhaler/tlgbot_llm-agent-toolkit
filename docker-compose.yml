@@ -25,4 +25,5 @@ services:
         source: ./data/assets
         target: /assets
     extra_hosts:
-    - "host.docker.internal:${HOST_IP}"
+    # - "http://host.docker.internal:${HOST_IP}"
+    - "host.docker.internal:host-gateway"
