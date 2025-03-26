@@ -300,7 +300,19 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         if not allowed_to_pass:
             return
 
-        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        emb_row = sys_sql3_table.get("embedding")
+        assert emb_row is not None
+
+        llm_factory = LLMFactory(
+            vdb=main_vdb,
+            webcache=web_db,
+            encoder_config={
+                "provider": emb_row["provider"],
+                "model_name": emb_row["model_name"],
+                "dimension": emb_row["dimension"],
+            },
+        )
 
         token_usage = None
         user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
@@ -334,7 +346,6 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         register_memory(identifier, force=False)
         register_user(identifier, message.from_user.name, force=False, premium=True)
 
-        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         cc_row = sys_sql3_table.get("chat-completion")
         assert cc_row is not None
         if message.text:
@@ -748,7 +759,19 @@ async def compress_memory_handler(update: Update, context: CallbackContext):
         if not allowed_to_pass:
             return
 
-        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db)
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        emb_row = sys_sql3_table.get("embedding")
+        assert emb_row is not None
+
+        llm_factory = LLMFactory(
+            vdb=main_vdb,
+            webcache=web_db,
+            encoder_config={
+                "provider": emb_row["provider"],
+                "model_name": emb_row["model_name"],
+                "dimension": emb_row["dimension"],
+            },
+        )
 
         umemory = chat_memory.get(identifier, None)
         if umemory is None:
@@ -953,7 +976,20 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
             persist=True, persist_directory=f"/temp/vect/{identifier}"
         )
-        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        emb_row = sys_sql3_table.get("embedding")
+        assert emb_row is not None
+
+        llm_factory = LLMFactory(
+            vdb=main_vdb,
+            webcache=web_db,
+            user_vdb=user_vdb,
+            encoder_config={
+                "provider": emb_row["provider"],
+                "model_name": emb_row["model_name"],
+                "dimension": emb_row["dimension"],
+            },
+        )
 
         tlg_msg = await message.reply_text(
             "<b>Progress</b>: <i>START</i>", parse_mode=ParseMode.HTML
@@ -1005,7 +1041,20 @@ async def photo_handler(update: Update, context: CallbackContext):
         user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
             persist=True, persist_directory=f"/temp/vect/{identifier}"
         )
-        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        emb_row = sys_sql3_table.get("embedding")
+        assert emb_row is not None
+
+        llm_factory = LLMFactory(
+            vdb=main_vdb,
+            webcache=web_db,
+            user_vdb=user_vdb,
+            encoder_config={
+                "provider": emb_row["provider"],
+                "model_name": emb_row["model_name"],
+                "dimension": emb_row["dimension"],
+            },
+        )
 
         tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
 
@@ -1085,7 +1134,20 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
             persist=True, persist_directory=f"/temp/vect/{identifier}"
         )
-        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        emb_row = sys_sql3_table.get("embedding")
+        assert emb_row is not None
+
+        llm_factory = LLMFactory(
+            vdb=main_vdb,
+            webcache=web_db,
+            user_vdb=user_vdb,
+            encoder_config={
+                "provider": emb_row["provider"],
+                "model_name": emb_row["model_name"],
+                "dimension": emb_row["dimension"],
+            },
+        )
 
         umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
         if umemory is None:
@@ -1166,7 +1228,20 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         user_vdb: chromadb.ClientAPI = ChromaDBFactory.get_instance(
             persist=True, persist_directory=f"/temp/vect/{identifier}"
         )
-        llm_factory = LLMFactory(vdb=main_vdb, webcache=web_db, user_vdb=user_vdb)
+        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+        emb_row = sys_sql3_table.get("embedding")
+        assert emb_row is not None
+
+        llm_factory = LLMFactory(
+            vdb=main_vdb,
+            webcache=web_db,
+            user_vdb=user_vdb,
+            encoder_config={
+                "provider": emb_row["provider"],
+                "model_name": emb_row["model_name"],
+                "dimension": emb_row["dimension"],
+            },
+        )
 
         umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
         if umemory is None:
