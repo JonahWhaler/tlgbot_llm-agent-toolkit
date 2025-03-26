@@ -197,7 +197,7 @@ async def set_chat_model_handler(update: Update, context: CallbackContext) -> No
         provider, model_name = provider_model.split("$$$")
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         sys_sql3_table.set(
-            "chat-completion", {"provider": provider, "model": model_name}
+            "chat-completion", {"provider": provider, "model_name": model_name}
         )
 
         await context.bot.send_message(
@@ -240,7 +240,7 @@ async def set_vision_model_handler(update: Update, context: CallbackContext) -> 
         provider, model_name = provider_model.split("$$$")
         sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         sys_sql3_table.set(
-            "image-interpretation", {"provider": provider, "model": model_name}
+            "image-interpretation", {"provider": provider, "model_name": model_name}
         )
 
         await context.bot.send_message(

@@ -12,7 +12,8 @@ from llm_agent_toolkit.core import (
 )  #  local aka Ollama
 import chromadb
 
-from agent_tools import ToolFactory
+# from agent_tools import ToolFactory
+from toolbox import ToolFactory
 
 from mystorage import WebCache
 from myconfig import PARAMETER, PROVIDER, OLLAMA_HOST, CHARACTER
@@ -27,8 +28,11 @@ class LLMFactory:
         vdb: chromadb.ClientAPI,
         webcache: WebCache,
         user_vdb: chromadb.ClientAPI | None = None,
+        encoder_config: dict | None = None,
     ):
-        self.tool_factory = ToolFactory(vdb=vdb, web_db=webcache, user_vdb=user_vdb)
+        self.tool_factory = ToolFactory(
+            vdb=vdb, web_db=webcache, user_vdb=user_vdb, encoder_config=encoder_config
+        )
 
     def create_chat_llm(
         self,
@@ -148,8 +152,9 @@ class LLMFactory:
                         tool_list.append(tool)
 
                 llm = gemini.Text_to_Text_W_Tool(
-                    system_prompt=system_prompt, config=config, tools=tools
+                    system_prompt=system_prompt, config=config, tools=tool_list
                 )
+                logger.info("Gemini LLM with Tools: %s [%s]", llm, tools)
         else:  # platform == "deepseek":
             if structured_output:
                 llm = deep_seek.Text_to_Text_SO(
