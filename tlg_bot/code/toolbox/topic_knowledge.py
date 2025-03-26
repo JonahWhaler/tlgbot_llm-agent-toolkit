@@ -103,7 +103,9 @@ class TopicQueryTool(Tool):
             logger.info("Loading file: %s", file_path)
             with open(file_path, "r", encoding="utf-8") as f:
                 text = f.read()
-                K = max(len(text) // (encoder.ctx_length // 2), 1)
+                K = len(text) * 0.5 / min(encoder.ctx_length, 2048)
+                K = max(int(K), 1)
+                logger.info("K: %d", K)
                 if K == 1:
                     chunker = FixedGroupChunker(config={"K": 1})
                 else:
@@ -111,7 +113,7 @@ class TopicQueryTool(Tool):
                         encoder=encoder,
                         config={
                             "K": K,
-                            "MAX_ITERATION": 50,
+                            "MAX_ITERATION": K * 10,
                             "update_rate": 0.3,
                             "min_coverage": 0.95,
                         },
