@@ -228,7 +228,11 @@ def init():
     )
     logging.getLogger("httpx").setLevel(logging.WARN)
 
-    sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+    logger = logging.getLogger(__name__)
+
+    logger.info("Initializing Database...")
+
+    sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", True)
     sys_sql3_table.set(
         "chat-completion",
         {
@@ -258,6 +262,15 @@ def init():
             "dimension": myconfig.DEFAULT_MODEL["emb"]["dimension"],
         },
     )
+    # Verify Database
+    for key in [
+        "chat-completion",
+        "image-interpretation",
+        "audio-transcription",
+        "embedding",
+    ]:
+        value_dict = sys_sql3_table.get(key)
+        logger.info("$ %s: %s", key, value_dict)
 
 
 if __name__ == "__main__":

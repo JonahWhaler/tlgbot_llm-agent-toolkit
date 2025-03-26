@@ -1,6 +1,7 @@
 """
 Module DocString
 """
+
 import os
 import logging
 import json
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 class TopicQueryTool(Tool):
     """
     # Topic Query Tool
-    
+
     Notes:
     - Please prepare all files in /assets/{title}
     - Only accept text files
@@ -66,8 +67,20 @@ class TopicQueryTool(Tool):
             )
             self.knowledge_base = chroma_memory
         except Exception as e:
-            logger.error("Failed to create %s knowledge base.", str(e))
-            raise e
+            if f"Collection {title} does not exist." not in str(e):
+                logger.error("TopicQueryTool: Exception: %s", e)
+                raise
+
+            logger.info("Creating new collection: %s", title)
+            self.init(vdb, title, encoder)
+            logger.info("Collection created: %s", title)
+            chunker = FixedGroupChunker(
+                config={"K": 1, "resolution": "back", "level": "character"}
+            )
+            chroma_memory = ChromaMemory(
+                vdb=vdb, encoder=encoder, chunker=chunker, namespace=title
+            )
+            self.knowledge_base = chroma_memory
 
     def init(self, vdb, title, encoder: Encoder) -> None:
         """
@@ -134,7 +147,7 @@ class TopicQueryTool(Tool):
         Use this tool to learn/find information related to {title}
         """
         return FunctionInfo(
-            name=f"TopicQueryTool:{title}",
+            name=f"TopicQueryTool_{title}",
             description=description,
             parameters=FunctionParameters(
                 properties=[
@@ -160,17 +173,17 @@ class TopicQueryTool(Tool):
             str: JSON string containing the retrieved documents or an error message
             if the parameters are invalid.
         """
-        valid, validation_message = self.validate(params=params)
+        params_dict = json.loads(params)
+        valid, validation_message = self.validate(**params_dict)
         if not valid:
             return json.dumps(
                 {
-                    "error": "Invalid parameters for TopicQueryTool",
+                    "error": "Invalid Parameters",
                     "detail": validation_message,
                 },
                 ensure_ascii=False,
             )
-
-        params_dict = json.loads(params)
+        # Load parameters
         query = params_dict.get("query", None)
         response = self.knowledge_base.query(
             query, return_n=self.num_results, output_types=["documents"]
@@ -189,11 +202,12 @@ class TopicQueryTool(Tool):
             str: JSON string containing the retrieved documents or an error message
             if the parameters are invalid.
         """
-        valid, validation_message = self.validate(params=params)
+        params_dict = json.loads(params)
+        valid, validation_message = self.validate(**params_dict)
         if not valid:
             return json.dumps(
                 {
-                    "error": "Invalid parameters for TopicQueryTool",
+                    "error": "Invalid Parameters",
                     "detail": validation_message,
                 },
                 ensure_ascii=False,

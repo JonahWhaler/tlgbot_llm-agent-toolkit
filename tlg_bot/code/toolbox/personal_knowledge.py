@@ -1,6 +1,7 @@
 """
 Module DocString
 """
+
 import os
 import logging
 import json
@@ -26,9 +27,10 @@ class PersonalKnowledgeBaseTool(Tool):
     Notes:
     - Please do not move the user_vdb
     - Never swap encoder in between
-    - This tool only read from the user_vdb, 
+    - This tool only read from the user_vdb,
     - Other parts of the code will add and remove content from the user_vdb
     """
+
     def __init__(
         self, user_vdb: chromadb.ClientAPI, encoder_config: dict, num_results: int = 10
     ):
@@ -105,18 +107,17 @@ class PersonalKnowledgeBaseTool(Tool):
             str: JSON string containing the retrieved documents or an error message
             if the parameters are invalid.
         """
-
-        valid, validation_message = self.validate(params=params)
+        params_dict = json.loads(params)
+        valid, validation_message = self.validate(**params_dict)
         if not valid:
             return json.dumps(
                 {
-                    "error": "Invalid parameters for PersonalKnowledgeBaseTool",
+                    "error": "Invalid Parameters",
                     "detail": validation_message,
                 },
                 ensure_ascii=False,
             )
-        
-        params_dict = json.loads(params)
+        # Load parameters
         query = params_dict.get("query", None)
         response = self.knowledge_base.query(
             query_string=query, return_n=self.num_results, output_types=["documents"]
@@ -135,17 +136,17 @@ class PersonalKnowledgeBaseTool(Tool):
             str: JSON string containing the retrieved documents or an error message
             if the parameters are invalid.
         """
-        valid, validation_message = self.validate(params=params)
+        params_dict = json.loads(params)
+        valid, validation_message = self.validate(**params_dict)
         if not valid:
             return json.dumps(
                 {
-                    "error": "Invalid parameters for PersonalKnowledgeBaseTool",
+                    "error": "Invalid Parameters",
                     "detail": validation_message,
                 },
                 ensure_ascii=False,
             )
-
-        params_dict = json.loads(params)
+        # Load parameters
         query = params_dict.get("query", None)
         response = self.knowledge_base.query(
             query_string=query, return_n=self.num_results, output_types=["documents"]

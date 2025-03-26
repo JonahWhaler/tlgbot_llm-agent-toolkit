@@ -21,6 +21,19 @@ from mystorage import WebCache
 
 
 class DDGSmartSearchTool(Tool):
+    """
+    # DuckDuckGo Smart Search Tool
+
+    Search for the relevant pages via DuckDuckGo API.
+
+    Enhanced implementation:
+    - Uses LLM to extract the relevant sections.
+    - Text only.
+    """
+
+    MIN_PAGE_LENGTH = 1024  # Skip llm if page is too short
+    TRUNCATE_AFTER = 8192  # Pass to llm up to this length to limit token usage
+
     def __init__(
         self,
         llm: Core,
@@ -30,6 +43,19 @@ class DDGSmartSearchTool(Tool):
         pause: float = 1.0,
         num_results: int = 5,
     ):
+        """
+        Initialize the DDGSmartSearchTool.
+
+        Args:
+            llm (Core): An instance of the LLM core used for processing queries.
+            web_cache (WebCache): A cache object to store web page content and query responses.
+            safesearch (str, optional): The safesearch setting for the search. Defaults to "off".
+            region (str, optional): The region for the search. Defaults to "my-en".
+            pause (float, optional): The time to pause between requests. Defaults to 1.0 seconds.
+            num_results (int, optional): The number of search results to return. Defaults to 5.
+
+        Sets up the necessary attributes for performing smart searches and caching results.
+        """
         Tool.__init__(self, DDGSmartSearchTool.function_info(), True)
         self.safesearch = safesearch
         self.region = region
@@ -43,6 +69,21 @@ class DDGSmartSearchTool(Tool):
 
     @staticmethod
     def function_info():
+        """
+        Generates a FunctionInfo object for the DDGSmartSearchTool.
+
+        This static method creates a FunctionInfo instance that describes
+        the DDGSmartSearchTool's capabilities for querying a specific knowledge
+        base given by the title. It includes the tool's name, description,
+        and the required parameters.
+
+        Parameters:
+            None
+
+        Returns:
+            A FunctionInfo object containing the tool's metadata and expected
+            input parameters.
+        """
         description = """
         Search for the relevant pages via DuckDuckGo API.
         Enhanced implementation:
@@ -97,17 +138,123 @@ class DDGSmartSearchTool(Tool):
         cleaned_text = re.sub(r"\n{3,}", "\n", cleaned_text)
         return cleaned_text
 
+    async def fetch_async(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        truncate_long_output: bool = True,
+    ):
+        """
+        Fetch the content of a URL and store it in the web cache.
+
+        If the URL is already cached, return the cached content.
+        Otherwise, fetch the content using the Google Search API,
+        process it, and store it in the web cache.
+
+        Args:
+            session (aiohttp.ClientSession): The session to use for the request.
+            url (str): The URL to fetch.
+            truncate_long_output (bool, optional): Whether to truncate the output if it is too long.
+                Defaults to True.
+
+        Returns:
+            (str): The content of the URL, or "Page not available" if there was an error.
+        """
+        logger = logging.getLogger(__name__)
+        cached_content: str | None = self.web_cache.get(url)
+        if cached_content:
+            return cached_content
+
+        output_string, DEFAULT_OUTPUT = None, "Page not available"
+        try:
+            await asyncio.sleep(self.pause)
+            async with session.get(url) as response:
+                data = await response.text()
+                soup = BeautifulSoup(data, "html.parser")
+                output_string = self.remove_whitespaces(soup.find("body").text)
+                if truncate_long_output:
+                    output_string = output_string[: DDGSmartSearchTool.TRUNCATE_AFTER]
+                return output_string
+        except Exception as e:
+            logger.error("Error fetching page %s: %s", url, e)
+            return DEFAULT_OUTPUT
+        finally:
+            self.web_cache.set(url, output_string if output_string else DEFAULT_OUTPUT)
+
+    def fetch(self, url: str, truncate_long_output: bool = True):
+        """
+        Fetch the content of a URL and store it in the web cache.
+
+        If the URL is already cached, return the cached content.
+        Otherwise, fetch the content using the Google Search API,
+        process it, and store it in the web cache.
+
+        Parameters:
+            url (str): The URL to fetch.
+            truncate_long_output (bool): Whether to truncate the output to a maximum length.
+                Defaults to True.
+
+        Returns:
+            (str): The content of the URL, or "Page not available" if there was an error.
+        """
+        logger = logging.getLogger(__name__)
+        cached_content: str | None = self.web_cache.get(url)
+        if cached_content:
+            return cached_content
+
+        output_string, DEFAULT_OUTPUT = None, "Page not available"
+        time.sleep(self.pause)
+        try:
+            page = requests.get(url=url, headers=self.headers, timeout=2, stream=False)
+            soup = BeautifulSoup(page.text, "html.parser")
+            body = soup.find("body")
+            if body:
+                t = body.text
+                t = self.remove_whitespaces(t)
+                output_string = t
+                if truncate_long_output:
+                    output_string = output_string[: DDGSmartSearchTool.TRUNCATE_AFTER]
+                return output_string
+            return DEFAULT_OUTPUT
+        except Exception as e:
+            logger.error("Error fetching page %s: %s", url, e)
+            return DEFAULT_OUTPUT
+        finally:
+            self.web_cache.set(url, output_string if output_string else DEFAULT_OUTPUT)
+
     async def run_async(self, params: str) -> str:
+        """
+        Execute a search query using the DuckDuckGo Search API.
+
+        This method takes a JSON string of search parameters, validates them,
+        and performs a search query using the DuckDuckGo Search API. It retrieves
+        search results and fetches the HTML content of each result page.
+
+        It then uses the LLM to extract the relevant sections from the HTML content.
+
+        Parameters:
+            params (str): JSON string containing the search parameters, including
+                the 'query' keyword.
+
+        Returns:
+            str: A JSON string containing the search results or an error message
+                if the parameters are invalid or if an error occurs during the
+                search process.
+        """
         logger = logging.getLogger(__name__)
         # Validate parameters
-        if not self.validate(params=params):
+        params_dict = json.loads(params)
+        valid, validation_message = self.validate(**params_dict)
+        if not valid:
             return json.dumps(
-                {"error": "Invalid parameters for DDGSmartSearchTool"},
-                ensure_ascii=True,
+                {
+                    "error": "Invalid Parameters",
+                    "detail": validation_message,
+                },
+                ensure_ascii=False,
             )
         # Load parameters
-        params = json.loads(params)
-        query = params.get("query", None)
+        query = params_dict.get("query", None)
 
         top_search = []
         error_message = "Unknown Error"
@@ -128,12 +275,7 @@ class DDGSmartSearchTool(Tool):
                             continue
 
                         page_html = await self.fetch_async(session, _r["href"])
-                        if page_html is None:
-                            top_search.append(_r)
-                            continue
-
-                        page_content_len = len(page_html)
-                        if page_content_len < 1024:
+                        if len(page_html) < DDGSmartSearchTool.MIN_PAGE_LENGTH:
                             summarized_content = page_html
                         else:
                             prompt = f"""Query: {query}
@@ -141,7 +283,7 @@ class DDGSmartSearchTool(Tool):
                             ---
                             * Page Title: {_r['title']}
                             * Page Body: {_r['body']}
-                            * Page Content: {page_html[:8_000]}
+                            * Page Content: {page_html}
                             ---
                             """
                             try:
@@ -155,17 +297,18 @@ class DDGSmartSearchTool(Tool):
                                     ],
                                 )
                                 summarized_content = responses[-1]["content"]
+                                # Update token usage
                                 self.token_usage = self.token_usage + usage
-                                # logger.info("$ Sumarized page content: %s", summarized_content)
-                            except Exception as error:
-                                logger.error(error, exc_info=True)
-                                summarized_content = "Not Available"
-
-                        # Store to cache
-                        self.web_cache.set(challenge, summarized_content)
-                        if summarized_content != "Not Available":
-                            _r["html"] = summarized_content
-
+                                # Store to cache
+                                self.web_cache.set(challenge, summarized_content)
+                            except Exception as e:
+                                logger.error(
+                                    "Error processing page: %s", e, exc_info=True
+                                )
+                                summarized_content = page_html[
+                                    : DDGSmartSearchTool.MIN_PAGE_LENGTH
+                                ]
+                        _r["html"] = summarized_content
                         top_search.append(_r)
                 except Exception as error:
                     if "202 Ratelimit" in str(error):
@@ -173,131 +316,109 @@ class DDGSmartSearchTool(Tool):
                     else:
                         error_message = str(error)
                     logger.warning(error_message)
+                    return json.dumps({"error": error_message}, ensure_ascii=False)
 
         if len(top_search) == 0:
-            return json.dumps({"error": error_message}, ensure_ascii=False)
+            return json.dumps({"error": "No results"}, ensure_ascii=False)
 
         web_search_result = "\n\n".join(json.dumps(top_search, ensure_ascii=False))
         return web_search_result
 
     def run(self, params: str) -> str:
+        """
+        Execute a search query using the DuckDuckGo search API.
+
+        This method takes a JSON string of search parameters, validates them,
+        and performs a search query using the DuckDuckGo search API. It retrieves
+        search results and fetches the HTML content of each result page.
+
+        It then uses the LLM to extract the relevant sections from the HTML content.
+
+        Parameters:
+            params (str): JSON string containing the search parameters, including
+                the 'query' keyword.
+
+        Returns:
+            str: A JSON string containing the search results or an error message
+                if the parameters are invalid or if an error occurs during the
+                search process.
+        """
         logger = logging.getLogger(__name__)
         # Validate parameters
-        if not self.validate(params=params):
+        params_dict = json.loads(params)
+        valid, validation_message = self.validate(**params_dict)
+        if not valid:
             return json.dumps(
-                {"error": "Invalid parameters for DDGSmartSearchTool"},
-                ensure_ascii=True,
+                {
+                    "error": "Invalid Parameters",
+                    "detail": validation_message,
+                },
+                ensure_ascii=False,
             )
         # Load parameters
-        params = json.loads(params)
-        query = params.get("query", None)
+        query = params_dict.get("query", None)
 
         top_search = []
         error_message = "Unknown Error"
-        with requests.Session() as session:
-            with DDGS(headers=self.headers) as ddgs:
-                try:
-                    for _r in ddgs.text(
-                        keywords=query,
-                        region=self.region,
-                        safesearch=self.safesearch,
-                        max_results=self.num_results,
-                    ):
-                        challenge = f"{query}-{_r['href']}"
-                        cached_content = self.web_cache.get(challenge)
-                        if cached_content:
-                            _r["html"] = cached_content
-                            top_search.append(_r)
-                            continue
-
-                        page_html = self.fetch(session=session, url=_r["href"])
-                        if page_html is None:
-                            top_search.append(_r)
-                            continue
-
-                        page_content_len = len(page_html)
-                        if page_content_len < 1024:
-                            summarized_content = page_html
-                        else:
-                            prompt = f"""Query: {query}
-                            Here is the web search result:
-                            ---
-                            * Page Title: {_r['title']}
-                            * Page Body: {_r['body']}
-                            * Page Content: {page_html[:8_000]}
-                            ---
-                            """
-                            try:
-                                responses, usage = self.llm.run(
-                                    query=prompt,
-                                    context=[
-                                        {
-                                            "role": "system",
-                                            "content": self.system_prompt,
-                                        }
-                                    ],
-                                )
-                                summarized_content = responses[-1]["content"]
-                                self.token_usage = self.token_usage + usage
-                                # logger.info("$ Sumarized page content: %s", summarized_content)
-                            except Exception as error:
-                                logger.error(error, exc_info=True)
-                                summarized_content = "Not Available"
-
-                        # Store to cache
-                        self.web_cache.set(challenge, summarized_content)
-                        if summarized_content != "Not Available":
-                            _r["html"] = summarized_content
-
+        with DDGS(headers=self.headers) as ddgs:
+            try:
+                for _r in ddgs.text(
+                    keywords=query,
+                    region=self.region,
+                    safesearch=self.safesearch,
+                    max_results=self.num_results,
+                ):
+                    challenge = f"{query}-{_r['href']}"
+                    cached_content = self.web_cache.get(challenge)
+                    if cached_content:
+                        _r["html"] = cached_content
                         top_search.append(_r)
-                except Exception as error:
-                    if "202 Ratelimit" in str(error):
-                        error_message = "Rate limit reached."
+                        continue
+
+                    page_html = self.fetch(url=_r["href"])
+                    if len(page_html) < DDGSmartSearchTool.MIN_PAGE_LENGTH:
+                        summarized_content = page_html
                     else:
-                        error_message = str(error)
+                        prompt = f"""Query: {query}
+                        Here is the web search result:
+                        ---
+                        * Page Title: {_r['title']}
+                        * Page Body: {_r['body']}
+                        * Page Content: {page_html}
+                        ---
+                        """
+                        try:
+                            responses, usage = self.llm.run(
+                                query=prompt,
+                                context=[
+                                    {
+                                        "role": "system",
+                                        "content": self.system_prompt,
+                                    }
+                                ],
+                            )
+                            summarized_content = responses[-1]["content"]
+                            # Update token usage
+                            self.token_usage = self.token_usage + usage
+                            # Store to cache
+                            self.web_cache.set(challenge, summarized_content)
+                        except Exception as e:
+                            logger.error("Error processing page: %s", e, exc_info=True)
+                            summarized_content = page_html[
+                                : DDGSmartSearchTool.MIN_PAGE_LENGTH
+                            ]
+                    _r["html"] = summarized_content
+                    top_search.append(_r)
+            except Exception as error:
+                if "202 Ratelimit" in str(error):
+                    error_message = "Rate limit reached."
+                else:
+                    error_message = str(error)
+                logger.warning(error_message)
+                return json.dumps({"error": error_message}, ensure_ascii=False)
 
         if len(top_search) == 0:
-            return json.dumps({"error": error_message}, ensure_ascii=False)
+            return json.dumps({"error": "No results"}, ensure_ascii=False)
 
         web_search_result = "\n\n".join(json.dumps(top_search, ensure_ascii=False))
         return web_search_result
-
-    async def fetch_async(self, session: aiohttp.ClientSession, url: str) -> str | None:
-        logger = logging.getLogger(__name__)
-        try:
-            cached_content: str | None = self.web_cache.get(url)
-            if cached_content:
-                logger.info("Load from cache: %s", url)
-                return cached_content
-
-            await asyncio.sleep(self.pause)
-            async with session.get(url) as response:
-                data = await response.text()
-                soup = BeautifulSoup(data, "html.parser")
-                output_string = self.remove_whitespaces(soup.find("body").text)
-                # Store to cache
-                self.web_cache.set(url, output_string)
-                return output_string
-        except Exception as _:
-            return None
-
-    def fetch(self, session: requests.Session, url: str) -> str | None:
-        logger = logging.getLogger(__name__)
-        try:
-            cached_content: str | None = self.web_cache.get(url)
-            if cached_content:
-                logger.info("Load from cache: %s", url)
-                return cached_content
-
-            time.sleep(self.pause)
-            page = session.get(url=url, headers=self.headers, timeout=2, stream=False)
-            soup = BeautifulSoup(page.text, "html.parser")
-            body = soup.find("body")
-            if body:
-                t = self.remove_whitespaces(body.text)
-                # Store to cache
-                self.web_cache.set(url, t)
-                return t
-            return None
-        except Exception as _:
-            return None
