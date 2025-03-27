@@ -1,1 +1,1 @@
-llm-agent-toolkit[transcriber,gemini,ollama]==0.0.30.7
+llm-agent-toolkit[transcriber,gemini,ollama]==0.0.30.8
