@@ -48,8 +48,12 @@ async def find_best_agent(
     if context:
         input_prompt["context"] = context
 
+    # This step makes the prompt unnecessarily long
+    # TODO: Optimization needed
+    templated_prompt = json.dumps(input_prompt, ensure_ascii=False)
+    logger.warning("Templated Prompt LENGTH: %d", len(templated_prompt))
     responses, usage = await agent_router.run_async(
-        query=json.dumps(input_prompt), context=None, mode=ResponseMode.JSON
+        query=templated_prompt, context=None, mode=ResponseMode.JSON
     )
 
     # Output
@@ -63,32 +67,28 @@ async def find_best_agent(
             logger.warning("Falling back to default agent.")
             best_agent = DEFAULT_CHARACTER
         reason = output_object.get("reason", "No reason provided.")
-        logger.info("Pick %s. Reason: %s", best_agent, reason)
+        logger.warning(
+            "[find_best_agent]\nPick %s. \nReason: %s\nToken Usage: %s",
+            best_agent,
+            reason,
+            usage,
+        )
         return best_agent, usage
     except json.JSONDecodeError:
         return DEFAULT_CHARACTER, usage
 
 
-async def update_memory(
+async def update_preference(
     agent: Core,
-    cmemory: dict[str, ShortTermMemory],
-    db: mystorage.SQLite3_Storage,
-    identifier: str,
-    new_content: str | None,
-) -> TokenUsage | None:
-    umemory: Optional[ShortTermMemory] = cmemory.get(identifier, None)
-    if new_content and umemory is not None:
-        if not new_content.startswith("/"):
-            umemory.push({"role": "user", "content": new_content})
-            cmemory[identifier] = umemory
-
-    uprofile = db.get(identifier)
-    if DEBUG == "1":
-        assert uprofile is not None
-
+    umemory: ShortTermMemory,
+    existing_preference: str | None = None,
+    # db: mystorage.SQLite3_Storage,
+    # identifier: str,
+    # new_content: str | None,
+) -> tuple[str | None, TokenUsage]:
     old_interactions = umemory.to_list()[:MEMORY_LEN]
     if len(old_interactions) == 0:
-        return
+        return existing_preference, TokenUsage(input_tokens=0, output_tokens=0)
 
     selected_interactions = []
     for interaction in old_interactions:
@@ -102,28 +102,35 @@ async def update_memory(
             )
 
     # context = selected_interactions if len(selected_interactions) > 0 else None
-    existing_memory = uprofile["memory"]
+    # existing_memory = uprofile["memory"]
     instructions = []
-    if existing_memory:
+    if existing_preference:
         instructions.extend(
             [
                 "Instruction:\nUpdate user's metadata.",
-                f"Existing Metadata: {existing_memory}",
+                f"Existing Metadata: {existing_preference}",
             ]
         )
     else:
         instructions.append("Construct user's metadata.")
 
     if len(selected_interactions) > 0:
-        instructions.append(f"Recent Interactions: {json.dumps(selected_interactions)}")
+        # This step makes the prompt unnecessarily long
+        # TODO: Optimization needed
+        instructions.append(
+            f"Recent Interactions: {json.dumps(selected_interactions, ensure_ascii=False)}"
+        )
 
     prompt = "\n\n".join(instructions)
     responses, usage = await agent.run_async(
         query=prompt, context=None, mode=ResponseMode.JSON
     )
-    uprofile["memory"] = responses[0]["content"]
-    db.set(identifier, uprofile)
-    return usage
+    logger.info(
+        "[update_preference]\nResponses: %d\nToken Usage: %s", len(responses), usage
+    )
+    # uprofile["memory"] = responses[-1]["content"]
+    # db.set(identifier, uprofile)
+    return responses[-1]["content"], usage
 
 
 async def process_audio_input(
@@ -298,21 +305,40 @@ async def reply(
     return msg
 
 
-async def compress_memory(
+async def compress_conv_hx(
     llm: Core,
     memory: ShortTermMemory,
 ) -> tuple[ShortTermMemory, TokenUsage]:
+    logger.info("EXEC compress_conv_hx")
     usage = None
     memories = memory.to_list()
-    memory.clear()
 
+    logger.info("len(memories) = %d", len(memories))
+
+    index = -1
+    conv_length = 0
+    for idx, mem in enumerate(memories, start=0):
+        _len = len(mem["content"])
+        if _len + conv_length > 32_000:
+            index = idx
+            break
+
+        conv_length += _len
+        logger.info("conv_length = %d", conv_length)
+
+    if index == -1:
+        logger.info("<= 32K. LENGTH: %d", conv_length)
+        return memory, TokenUsage(input_tokens=0, output_tokens=0)
+
+    # Need Compression
+    memory.clear()
     context_strings = []
-    for mem in memories:
+    for mem in memories[:index]:
         context_strings.append(" - " + mem["role"] + ": " + mem["content"])
     conv_history = "\n".join(context_strings)
 
     prompt = f"""
-    Compress the past conversations.
+    Compress conversations below.
 
     ---
     {conv_history}
@@ -321,10 +347,20 @@ async def compress_memory(
 
     try:
         responses, usage = await llm.run_async(query=prompt, context=None)
-        memory.push({"role": "assistant", "content": responses[-1]["content"]})
+        # Push the compressed response
+        memory.push(
+            {
+                "role": "assistant",
+                "content": f"<compressed>{responses[-1]['content']}</compressed>",
+            }
+        )
+        # Push the rest
+        for mem in memories[index:]:
+            memory.push(mem)
+        logger.info("Compress Token Usage: %s", usage)
         return memory, usage
     except Exception as e:
-        logger.error("compress memory: %s", e)
+        logger.error("compress_conv_hx: %s", e)
         # Reduce the oldest
         for mem in memories[1:]:
             memory.push(mem)

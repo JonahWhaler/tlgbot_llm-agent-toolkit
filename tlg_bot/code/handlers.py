@@ -29,10 +29,10 @@ from pygrl import BasicStorage, GeneralRateLimiter as grl
 from custom_workflow import (
     image_interpreter_pipeline as ii_pipeline,
     find_best_agent,
-    update_memory,
+    update_preference,
     process_audio_input,
     reply,
-    compress_memory,
+    compress_conv_hx,
 )
 from custom_library import store_to_drive, format_identifier, map_file_extension
 from transcriber import TranscriberFactory
@@ -162,6 +162,9 @@ async def call_llm(
             responses, usage = await llm.run_async(
                 query=prompt, context=context, mode=mode, format=response_format
             )
+            logger.info(
+                "[call_llm]\nResponses: %d\nToken Usage: %s", len(responses), usage
+            )
             return responses, usage
         except ValueError as ve:
             if "max_output_tokens <= 0" in str(ve):
@@ -225,7 +228,7 @@ async def call_chat_llm(
             f"<b>Progress</b>: <i>CALLING {myconfig.CHARACTER[character]['name']}</i>",
             parse_mode=ParseMode.HTML,
         )
-        logger.info("Find Best Agent Token Usage: %s", find_best_agent_usage)
+        # logger.info("Find Best Agent Token Usage: %s", find_best_agent_usage)
 
     llm = llm_factory.create_chat_llm(platform, model_name, character)
     tlg_msg = await tlg_msg.edit_text(
@@ -239,17 +242,16 @@ async def call_chat_llm(
         parse_mode=ParseMode.HTML,
     )
     profile["usage"][platform] += usage.total_tokens
-    logger.info("Generated %d responses.", len(responses))
-    for response in responses:
-        # logger.info("\nResponse: %s", response["content"])
-        memory.push({"role": "assistant", "content": response["content"]})
-
-    if usage.input_tokens > 32_000:
-        llm = llm_factory.create_chat_llm(platform, model_name, "compressor", False)
-        memory, compress_usage = await compress_memory(llm, memory)
-        profile["usage"][platform] += compress_usage.total_tokens
+    # Add every steps to memory provides richer context but costs more memory
+    # logger.info("Generated %d responses.", len(responses))
+    # for response in responses:
+    #     # logger.info("\nResponse: %s", response["content"])
+    #     memory.push({"role": "assistant", "content": response["content"]})
 
     final_response = responses[-1]
+    # Budget approach: Only keep the final response
+    memory.push({"role": "assistant", "content": final_response["content"]})
+
     character_name = myconfig.CHARACTER[character]["name"]
     output_string = (
         f"**{character_name}** [*{model_name}*]:\n{final_response['content']}"
@@ -319,11 +321,9 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
             },
         )
 
-        token_usage = None
         user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+        # Authentication
         user_profile = user_sql3_table.get(identifier)
-        logger.warning("Profile: %s", user_profile)
-        logger.warning("Context: %s", context.user_data)
         if user_profile is None:
             if message.chat.id not in myconfig.PREMIUM_MEMBERS:
                 register_memory(identifier, force=False)
@@ -352,17 +352,36 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
         register_user(identifier, message.from_user.name, force=False, premium=True)
 
         cc_row = sys_sql3_table.get("chat-completion")
-        assert cc_row is not None
+        t_row = sys_sql3_table.get("audio-transcription")
+        assert cc_row is not None and t_row is not None
+
+        umemory = chat_memory[identifier]
+        uprofile = user_sql3_table.get(identifier)
+        token_usage = TokenUsage(input_tokens=0, output_tokens=0)
         if message.text:
             if not message.text.startswith("/"):
+                # Compress long conversations
+                compressor = llm_factory.create_chat_llm(
+                    cc_row["provider"], cc_row["model_name"], "compressor", False
+                )
+                umemory, compress_token_usage = await compress_conv_hx(
+                    compressor, umemory
+                )
+                umemory.push({"role": "user", "content": message.text})
+                if compress_token_usage.total_tokens > 0:
+                    token_usage += compress_token_usage
+                # Extract User Preference
                 agent_zero = llm_factory.create_chat_llm(
                     cc_row["provider"], cc_row["model_name"], "extractor", True
                 )
-                token_usage = await update_memory(
-                    agent_zero, chat_memory, user_sql3_table, identifier, message.text
+                current_preference = uprofile.get("memory", None)
+                updated_preference, _token_usage = await update_preference(
+                    agent_zero, umemory, current_preference
                 )
+                if _token_usage.total_tokens > 0:
+                    uprofile["memory"] = updated_preference
+                    token_usage += _token_usage
         elif message.voice or message.audio:
-            t_row = sys_sql3_table.get("audio-transcription")
             transcriber_factory = TranscriberFactory(
                 provider=t_row["provider"],
                 model_name=t_row["model_name"],
@@ -377,43 +396,49 @@ async def middleware_function(update: Update, context: CallbackContext) -> None:
             )
 
             if transcript is None:
-                chat_memory[identifier].push(
+                umemory.push(
                     {
                         "role": "user",
                         "content": "Audio Upload failed - File is too big.",
                     }
                 )
-                return
-
-            if transcript:
+            else:
                 prefix = "Audio Upload" if message.audio else "Voice Input"
                 content = f"{prefix}:\n{transcript}"
+                umemory.push({"role": "user", "content": content})
                 logger.info("Add %s to memory.", content)
-                cc_row = sys_sql3_table.get("chat-completion")
-                assert cc_row is not None
+                # Extract User Preference
                 agent_zero = llm_factory.create_chat_llm(
                     cc_row["provider"], cc_row["model_name"], "extractor", True
                 )
-                token_usage = await update_memory(
-                    agent_zero, chat_memory, user_sql3_table, identifier, content
+                current_preference = uprofile.get("memory", None)
+                updated_preference, _token_usage = await update_preference(
+                    agent_zero, umemory, current_preference
                 )
+                if _token_usage.total_tokens > 0:
+                    uprofile["memory"] = updated_preference
+                    token_usage += _token_usage
+
                 await reply(
                     message, f"**Whisper 🎤 [{t_row['model_name']}]**:\n{transcript}"
                 )
 
             if txt_path:
+                txt_filename = os.path.basename(txt_path)
                 await message.reply_document(
                     document=txt_path,
                     caption=message.caption,
                     allow_sending_without_reply=True,
-                    filename=os.path.basename(txt_path),
+                    filename=txt_filename,
                 )
-
-        if token_usage:
-            uprofile = user_sql3_table.get(identifier)
-            assert uprofile is not None
+        # Clean Up
+        ## Update Token Usage
+        if token_usage.total_tokens > 0:
             uprofile["usage"][cc_row["provider"]] += token_usage.total_tokens
-            user_sql3_table.set(identifier, uprofile)
+        ## Update User Profile
+        user_sql3_table.set(identifier, uprofile)
+        ## Update Chat Memory
+        chat_memory[identifier] = umemory
 
 
 async def show_character_handler(update: Update, context: CallbackContext) -> None:
@@ -1014,6 +1039,9 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
 
         output_string, updated_memory, updated_profile = await call_chat_llm(
             uprofile, umemory, prompt, tlg_msg, llm_factory
+        )
+        logger.info(
+            "Memory %d -> %d", len(umemory.to_list()), len(updated_memory.to_list())
         )
         user_sql3_table.set(identifier, updated_profile)
         chat_memory[identifier] = updated_memory
