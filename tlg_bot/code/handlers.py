@@ -19,7 +19,7 @@ from telegram.constants import ParseMode
 from pydantic import BaseModel
 import chromadb
 
-from llm_agent_toolkit import Core, ResponseMode, ShortTermMemory  # type: ignore
+from llm_agent_toolkit import Core, CreatorRole, ResponseMode, ShortTermMemory  # type: ignore
 from llm_agent_toolkit._util import TokenUsage
 
 from llms import LLMFactory
@@ -179,26 +179,30 @@ async def call_llm(
     raise ValueError(f"max_output_tokens <= 0. Retry up to {MAX_RETRY} times.")
 
 
-async def call_chat_llm(
-    profile: dict,
-    memory: ShortTermMemory,
-    prompt: str,
+async def ai_ops(
     tlg_msg: telegram.Message,
+    identifier: str,
+    umemory: ShortTermMemory,
     llm_factory: LLMFactory,
-) -> tuple[str, ShortTermMemory, dict]:
-    logger.info("Executing call_chat_llm")
-    platform = profile["platform_t2t"]
-    model_name = profile["model_t2t"]
-    character = profile["character"]
-    metadata = profile["memory"]
+):
+    global chat_memory
 
-    recent_conv = memory.last_n(myconfig.MEMORY_LEN)
-    if len(recent_conv) > 2:
-        recent_conv = recent_conv[:-1]
-    else:
-        recent_conv = None
+    local_msg = await tlg_msg.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
+    sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
+    user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
+    uprofile: dict = user_sql3_table.get(identifier)
+
+    recent_conv = umemory.last_n(myconfig.MEMORY_LEN)
+    assert (
+        len(recent_conv) >= 1
+    ), f"Expect recent conversation >= 1, get {len(recent_conv)}"
+
+    prompt = recent_conv[-1]["content"]
+
+    metadata = uprofile["memory"]
     if metadata:
         if recent_conv:
+            recent_conv = recent_conv[:-1]  # Take out the last one
             recent_conv.insert(
                 0, {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
             )
@@ -207,56 +211,60 @@ async def call_chat_llm(
                 {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
             ]
 
-    auto_routing = profile["auto_routing"]
+    character = uprofile["character"]
+    auto_routing = uprofile["auto_routing"]
     if auto_routing:
-        sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
         cc_row = sys_sql3_table.get("chat-completion")
-        assert cc_row is not None
+        _provider, _model_name = cc_row["provider"], cc_row["model_name"]
         agent_router = llm_factory.create_chat_llm(
-            cc_row["provider"], cc_row["model_name"], "router", True
+            _provider, _model_name, "router", True
         )
-        tlg_msg = await tlg_msg.edit_text(
+        local_msg = await local_msg.edit_text(
             "<b>Progress</b>: <i>ROUTING</i>", parse_mode=ParseMode.HTML
         )
         character, find_best_agent_usage = await find_best_agent(
-            agent_router,
-            prompt,
-            context=recent_conv[-3:] if recent_conv else recent_conv,
+            agent_router, prompt, recent_conv[-3:]
         )
-        profile["usage"][cc_row["provider"]] += find_best_agent_usage.total_tokens
-        tlg_msg = await tlg_msg.edit_text(
-            f"<b>Progress</b>: <i>CALLING {myconfig.CHARACTER[character]['name']}</i>",
-            parse_mode=ParseMode.HTML,
+        # Clean Up
+        find_best_agent_message = (
+            f"<b>Progress</b>: <i>CALLING {myconfig.CHARACTER[character]['name']}</i>"
         )
-        # logger.info("Find Best Agent Token Usage: %s", find_best_agent_usage)
+        find_best_agent_message += (
+            f"\n<b>Usage:</b>\nInput: {find_best_agent_usage.input_tokens}"
+        )
+        find_best_agent_message += f"\nOutput: {find_best_agent_usage.output_tokens}\nTotal: {find_best_agent_usage.total_tokens}"
 
-    llm = llm_factory.create_chat_llm(platform, model_name, character)
-    tlg_msg = await tlg_msg.edit_text(
-        "<b>Progress</b>: <i>GENERATING</i>", parse_mode=ParseMode.HTML
-    )
-    responses, usage = await call_llm(
-        llm, prompt, recent_conv, ResponseMode.DEFAULT, None
-    )
-    tlg_msg = await tlg_msg.edit_text(
-        f"<b>Progress</b>: <i>DONE</i>\n<b>Usage</b>:\nInput: {usage.input_tokens}\nOutput: {usage.output_tokens}\nTotal: {usage.total_tokens}",
-        parse_mode=ParseMode.HTML,
-    )
-    profile["usage"][platform] += usage.total_tokens
-    # Add every steps to memory provides richer context but costs more memory
-    # logger.info("Generated %d responses.", len(responses))
-    # for response in responses:
-    #     # logger.info("\nResponse: %s", response["content"])
-    #     memory.push({"role": "assistant", "content": response["content"]})
+        local_msg = await local_msg.edit_text(
+            find_best_agent_message, parse_mode=ParseMode.HTML
+        )
+        uprofile["usage"][_provider] += find_best_agent_usage.total_tokens
 
-    final_response = responses[-1]
-    # Budget approach: Only keep the final response
-    memory.push({"role": "assistant", "content": final_response["content"]})
-
-    character_name = myconfig.CHARACTER[character]["name"]
-    output_string = (
-        f"**{character_name}** [*{model_name}*]:\n{final_response['content']}"
+    specialized_agent = llm_factory.create_chat_llm(
+        uprofile["platform_t2t"], uprofile["model_t2t"], character, False
     )
-    return output_string, memory, profile
+    responses, chat_token_usage = await call_llm(
+        specialized_agent,
+        prompt,
+        context=recent_conv,
+        mode=ResponseMode.DEFAULT,
+        response_format=None,
+    )
+    final_response_content = responses[-1]["content"]
+
+    # Clean Up
+    umemory.push(
+        {"role": CreatorRole.ASSISTANT.value, "content": final_response_content}
+    )
+    user_sql3_table.set(identifier, uprofile)
+    uprofile["usage"][uprofile["platform_t2t"]] += chat_token_usage.total_tokens
+    chat_memory[identifier] = umemory
+    complete_message = "<b>Progress</b>: <i>DONE</i>"
+    complete_message += f"\n<b>Usage:</b>\nInput: {chat_token_usage.input_tokens}"
+    complete_message += f"\nOutput: {chat_token_usage.output_tokens}\nTotal: {chat_token_usage.total_tokens}"
+
+    local_msg = await local_msg.edit_text(complete_message, parse_mode=ParseMode.HTML)
+    # Output generated response
+    return final_response_content
 
 
 def remove_related_to_file(mem: ShortTermMemory, file_prefix: str) -> ShortTermMemory:
@@ -1021,10 +1029,6 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
             },
         )
 
-        tlg_msg = await message.reply_text(
-            "<b>Progress</b>: <i>START</i>", parse_mode=ParseMode.HTML
-        )
-
         prompt: str = message.text
         if prompt is None or prompt == "":
             raise ValueError("Prompt is None or empty.")
@@ -1033,20 +1037,11 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
         if umemory is None:
             raise ValueError("Memory is None.")
 
-        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
-        uprofile = user_sql3_table.get(identifier)
-        assert uprofile is not None
+        assert prompt == umemory.to_list()[-1]["content"]
 
-        output_string, updated_memory, updated_profile = await call_chat_llm(
-            uprofile, umemory, prompt, tlg_msg, llm_factory
-        )
-        logger.info(
-            "Memory %d -> %d", len(umemory.to_list()), len(updated_memory.to_list())
-        )
-        user_sql3_table.set(identifier, updated_profile)
-        chat_memory[identifier] = updated_memory
-        await reply(message, output_string)
-
+        final_response_content = await ai_ops(message, identifier, umemory, llm_factory)
+        # Output generated response
+        await reply(message, final_response_content)
     logger.info("Released lock for user: %s", identifier)
 
 
@@ -1089,8 +1084,6 @@ async def photo_handler(update: Update, context: CallbackContext):
             },
         )
 
-        tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
-
         umemory: Optional[ShortTermMemory] = chat_memory.get(identifier, None)
         if umemory is None:
             raise ValueError("Memory is None.")
@@ -1120,7 +1113,7 @@ async def photo_handler(update: Update, context: CallbackContext):
         assert uprofile is not None
 
         ii_resp_tuple = await ii_pipeline(uprofile, prompt, export_path, llm_factory)
-        output_string, updated_profile = ii_resp_tuple
+        output_string, uprofile = ii_resp_tuple
         # platform = uprofile["platform_i2t"]
         # uprofile["usage"][platform] += usage.total_tokens
         umemory.push({"role": "user", "content": output_string})
@@ -1131,16 +1124,9 @@ async def photo_handler(update: Update, context: CallbackContext):
         if message.caption:
             prompt += f"\nCaption={message.caption}"
 
-        response_tuple = await call_chat_llm(
-            updated_profile, umemory, prompt, tlg_msg, llm_factory
-        )
-        output_string, updated_memory, updated_profile = response_tuple
-        # Leaving
-        user_sql3_table.set(identifier, updated_profile)
-        updated_memory.push({"role": "assistant", "content": output_string})
-        chat_memory[identifier] = updated_memory
-        await reply(message, output_string)
-    # logger.info("Released lock for user: %s", identifier)
+        generated_content = await ai_ops(message, identifier, umemory, llm_factory)
+        await reply(message, generated_content)
+    logger.info("Released lock for user: %s", identifier)
 
 
 async def voice_handler(update: Update, context: CallbackContext) -> None:
@@ -1186,31 +1172,8 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         if umemory is None:
             raise ValueError("Memory is None.")
 
-        recent_conversation = umemory.last_n(n=myconfig.MEMORY_LEN)
-        if len(recent_conversation) == 0:
-            raise ValueError("Recent Conversation is None.")
-
-        prompt = recent_conversation[-1]["content"]
-        logger.info("Prompt: %s", prompt)
-        if len(recent_conversation) > 1:
-            recent_conversation = recent_conversation[:-1]  # The last one is the prompt
-        else:
-            recent_conversation = None
-
-        user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
-        uprofile = user_sql3_table.get(identifier)
-        assert uprofile is not None
-
-        tlg_msg = await message.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
-        chat_resp_tuple = await call_chat_llm(
-            uprofile, umemory, prompt, tlg_msg, llm_factory
-        )
-        output_string, updated_memory, updated_profile = chat_resp_tuple
-        user_sql3_table.set(identifier, updated_profile)
-        chat_memory[identifier] = updated_memory
-
-        await reply(message, output_string)
-
+        generated_content = await ai_ops(message, identifier, umemory, llm_factory)
+        await reply(message, generated_content)
     logger.info("Released lock for user: %s", identifier)
 
 
