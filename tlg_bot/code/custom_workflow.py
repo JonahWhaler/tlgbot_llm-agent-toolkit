@@ -376,6 +376,7 @@ async def compress_conv_hx(
         return memory, TokenUsage(input_tokens=0, output_tokens=0)
 
     # Need Compression
+    logger.info("Compressing... %d conversations.", index + 1)
     memory.clear()
     context_strings = []
     for mem in memories[:index]:
@@ -421,7 +422,9 @@ async def call_ai_ops(
     chat_memory_dict: dict[str, ShortTermMemory],
     llm_factory: LLMFactory,
 ):
-    local_msg = await tlg_msg.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
+    start_datetime = datetime.now().strftime("%Y-%m-%d %H:%M")
+    progress_string = f"<b>START</b>: {start_datetime}"
+    local_msg = await tlg_msg.reply_text(progress_string, parse_mode=ParseMode.HTML)
     sys_sql3_table = SQLite3_Storage(DB_PATH, "system", False)
     user_sql3_table = SQLite3_Storage(DB_PATH, "user_profile", False)
     uprofile: dict = user_sql3_table.get(identifier)
@@ -453,25 +456,25 @@ async def call_ai_ops(
         agent_router = llm_factory.create_chat_llm(
             _provider, _model_name, "router", True
         )
+        routing_dt = datetime.now().strftime("%Y-%m-%d %H:%M")
+        progress_string += f"\n<b>ROUTING</b>: {routing_dt}"
         local_msg = await local_msg.edit_text(
-            "<b>Progress</b>: <i>ROUTING</i>", parse_mode=ParseMode.HTML
+            progress_string, parse_mode=ParseMode.HTML
         )
-        character, find_best_agent_usage = await find_best_agent(
+        character, fba_usage = await find_best_agent(
             agent_router, prompt, recent_conv[-3:]
         )
         # Clean Up
-        find_best_agent_message = (
-            f"<b>Progress</b>: <i>CALLING {CHARACTER[character]['name']}</i>"
-        )
-        find_best_agent_message += (
-            f"\n<b>Usage:</b>\nInput: {find_best_agent_usage.input_tokens}"
-        )
-        find_best_agent_message += f"\nOutput: {find_best_agent_usage.output_tokens}\nTotal: {find_best_agent_usage.total_tokens}"
+        progress_string += "\n<b>Routing Token Usage:</b>"
+        progress_string += f"\n >> Input: {fba_usage.input_tokens}"
+        progress_string += f"\n >> Output: {fba_usage.output_tokens}"
+        progress_string += f"\n---\n >> Total: {fba_usage.total_tokens}\n"
 
+        progress_string += f"\n<b>CALLING</b>: {CHARACTER[character]['name']}\n"
         local_msg = await local_msg.edit_text(
-            find_best_agent_message, parse_mode=ParseMode.HTML
+            progress_string, parse_mode=ParseMode.HTML
         )
-        uprofile["usage"][_provider] += find_best_agent_usage.total_tokens
+        uprofile["usage"][_provider] += fba_usage.total_tokens
 
     specialized_agent = llm_factory.create_chat_llm(
         uprofile["platform_t2t"], uprofile["model_t2t"], character, False
@@ -492,10 +495,13 @@ async def call_ai_ops(
     user_sql3_table.set(identifier, uprofile)
     uprofile["usage"][uprofile["platform_t2t"]] += chat_token_usage.total_tokens
     chat_memory_dict[identifier] = umemory
-    complete_message = "<b>Progress</b>: <i>DONE</i>"
-    complete_message += f"\n<b>Usage:</b>\nInput: {chat_token_usage.input_tokens}"
-    complete_message += f"\nOutput: {chat_token_usage.output_tokens}\nTotal: {chat_token_usage.total_tokens}"
+    g_dt = datetime.now().strftime("%Y-%m-%d %H:%M")
+    progress_string += f"\n<b>COMPLETED</b>: {g_dt}"
+    progress_string += "\n<b>Chat Token Usage:</b>"
+    progress_string += f"\n >> Input: {chat_token_usage.input_tokens}"
+    progress_string += f"\n >> Output: {chat_token_usage.output_tokens}"
+    progress_string += f"\n---\n >> Total: {chat_token_usage.total_tokens}"
 
-    local_msg = await local_msg.edit_text(complete_message, parse_mode=ParseMode.HTML)
+    local_msg = await local_msg.edit_text(progress_string, parse_mode=ParseMode.HTML)
     # Output generated response
     return final_response_content
