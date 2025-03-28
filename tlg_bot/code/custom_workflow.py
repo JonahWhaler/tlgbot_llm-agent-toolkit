@@ -2,22 +2,28 @@ import os
 import json
 import re
 import logging
-from typing import Any, Optional
+from typing import Any
 from datetime import datetime
 import telegram
 from telegram import Message
 from telegram.ext import CallbackContext
 from telegram.error import TelegramError
 from telegram.constants import ParseMode
-from llm_agent_toolkit import Core, ResponseMode, ShortTermMemory, ImageInterpreter
+from llm_agent_toolkit import (
+    Core,
+    CreatorRole,
+    ResponseMode,
+    ShortTermMemory,
+    ImageInterpreter,
+)
 from llm_agent_toolkit._util import TokenUsage
 from llm_agent_toolkit.transcriber import Transcriber
 
 from custom_library import store_to_drive, unpack_ii_content
 from llms import LLMFactory, IIResponse
 
-import mystorage
-from myconfig import CHARACTER, DEFAULT_CHARACTER, MEMORY_LEN, DEBUG
+from mystorage import SQLite3_Storage
+from myconfig import CHARACTER, DEFAULT_CHARACTER, DB_PATH, MEMORY_LEN, DEBUG
 
 logger = logging.getLogger(__name__)
 
@@ -407,3 +413,89 @@ async def compress_conv_hx(
         if usage is None:
             usage = TokenUsage(input_tokens=0, output_tokens=0)
         return memory, usage
+
+
+async def call_ai_ops(
+    tlg_msg: telegram.Message,
+    identifier: str,
+    chat_memory_dict: dict[str, ShortTermMemory],
+    llm_factory: LLMFactory,
+):
+    local_msg = await tlg_msg.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
+    sys_sql3_table = SQLite3_Storage(DB_PATH, "system", False)
+    user_sql3_table = SQLite3_Storage(DB_PATH, "user_profile", False)
+    uprofile: dict = user_sql3_table.get(identifier)
+    umemory: ShortTermMemory = chat_memory_dict.get(identifier, None)
+    recent_conv = umemory.last_n(MEMORY_LEN)
+    assert (
+        len(recent_conv) >= 1
+    ), f"Expect recent conversation >= 1, get {len(recent_conv)}"
+
+    prompt = recent_conv[-1]["content"]
+
+    metadata = uprofile["memory"]
+    if metadata:
+        if recent_conv:
+            recent_conv = recent_conv[:-1]  # Take out the last one
+            recent_conv.insert(
+                0, {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
+            )
+        else:
+            recent_conv = [
+                {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
+            ]
+
+    character = uprofile["character"]
+    auto_routing = uprofile["auto_routing"]
+    if auto_routing:
+        cc_row = sys_sql3_table.get("chat-completion")
+        _provider, _model_name = cc_row["provider"], cc_row["model_name"]
+        agent_router = llm_factory.create_chat_llm(
+            _provider, _model_name, "router", True
+        )
+        local_msg = await local_msg.edit_text(
+            "<b>Progress</b>: <i>ROUTING</i>", parse_mode=ParseMode.HTML
+        )
+        character, find_best_agent_usage = await find_best_agent(
+            agent_router, prompt, recent_conv[-3:]
+        )
+        # Clean Up
+        find_best_agent_message = (
+            f"<b>Progress</b>: <i>CALLING {CHARACTER[character]['name']}</i>"
+        )
+        find_best_agent_message += (
+            f"\n<b>Usage:</b>\nInput: {find_best_agent_usage.input_tokens}"
+        )
+        find_best_agent_message += f"\nOutput: {find_best_agent_usage.output_tokens}\nTotal: {find_best_agent_usage.total_tokens}"
+
+        local_msg = await local_msg.edit_text(
+            find_best_agent_message, parse_mode=ParseMode.HTML
+        )
+        uprofile["usage"][_provider] += find_best_agent_usage.total_tokens
+
+    specialized_agent = llm_factory.create_chat_llm(
+        uprofile["platform_t2t"], uprofile["model_t2t"], character, False
+    )
+    responses, chat_token_usage = await call_cc(
+        specialized_agent,
+        prompt,
+        context=recent_conv,
+        mode=ResponseMode.DEFAULT,
+        response_format=None,
+    )
+    final_response_content = responses[-1]["content"]
+
+    # Clean Up
+    umemory.push(
+        {"role": CreatorRole.ASSISTANT.value, "content": final_response_content}
+    )
+    user_sql3_table.set(identifier, uprofile)
+    uprofile["usage"][uprofile["platform_t2t"]] += chat_token_usage.total_tokens
+    chat_memory_dict[identifier] = umemory
+    complete_message = "<b>Progress</b>: <i>DONE</i>"
+    complete_message += f"\n<b>Usage:</b>\nInput: {chat_token_usage.input_tokens}"
+    complete_message += f"\nOutput: {chat_token_usage.output_tokens}\nTotal: {chat_token_usage.total_tokens}"
+
+    local_msg = await local_msg.edit_text(complete_message, parse_mode=ParseMode.HTML)
+    # Output generated response
+    return final_response_content

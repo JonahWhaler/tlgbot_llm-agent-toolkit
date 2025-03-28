@@ -7,7 +7,7 @@ import logging
 
 # import json
 from asyncio import Lock
-from typing import Any, Optional
+from typing import Optional
 from hashlib import md5
 from datetime import datetime
 
@@ -16,10 +16,9 @@ import telegram
 from telegram import Update
 from telegram.ext import CallbackContext
 from telegram.constants import ParseMode
-from pydantic import BaseModel
 import chromadb
 
-from llm_agent_toolkit import Core, CreatorRole, ResponseMode, ShortTermMemory  # type: ignore
+from llm_agent_toolkit import ResponseMode, ShortTermMemory  # type: ignore
 from llm_agent_toolkit._util import TokenUsage
 
 from llms import LLMFactory
@@ -27,8 +26,9 @@ from pygrl import BasicStorage, GeneralRateLimiter as grl
 
 # Internal Imports
 from custom_workflow import (
+    call_ai_ops,
+    call_cc,
     image_interpreter_pipeline as ii_pipeline,
-    find_best_agent,
     update_preference,
     process_audio_input,
     reply,
@@ -145,124 +145,6 @@ def generate_unique_filename(seed: str, extension: str, deterministic: bool = Fa
 
     hash_value = md5(content.encode()).hexdigest()
     return f"{hash_value}.{extension}"
-
-
-async def call_llm(
-    llm: Core,
-    prompt: str,
-    context: list[dict],
-    mode: ResponseMode,
-    response_format: Any,
-) -> tuple[list[dict], TokenUsage]:
-    MAX_RETRY = 5
-    iteration = 0
-    while iteration < MAX_RETRY:
-        logger.info("Attempt: %d", iteration)
-        try:
-            responses, usage = await llm.run_async(
-                query=prompt, context=context, mode=mode, format=response_format
-            )
-            logger.info(
-                "[call_llm]\nResponses: %d\nToken Usage: %s", len(responses), usage
-            )
-            return responses, usage
-        except ValueError as ve:
-            if "max_output_tokens <= 0" in str(ve):
-                context = context[1:]
-                iteration += 1
-            else:
-                logger.error("call_llm: ValueError: %s", ve)
-                iteration += 1
-        except Exception as e:
-            logger.error("call_llm: Exception: %s", e)
-            raise
-    raise ValueError(f"max_output_tokens <= 0. Retry up to {MAX_RETRY} times.")
-
-
-async def ai_ops(
-    tlg_msg: telegram.Message,
-    identifier: str,
-    chat_memory_dict: dict[str, ShortTermMemory],
-    llm_factory: LLMFactory,
-):
-    local_msg = await tlg_msg.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
-    sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
-    user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
-    uprofile: dict = user_sql3_table.get(identifier)
-    umemory: ShortTermMemory = chat_memory_dict.get(identifier, None)
-    recent_conv = umemory.last_n(myconfig.MEMORY_LEN)
-    assert (
-        len(recent_conv) >= 1
-    ), f"Expect recent conversation >= 1, get {len(recent_conv)}"
-
-    prompt = recent_conv[-1]["content"]
-
-    metadata = uprofile["memory"]
-    if metadata:
-        if recent_conv:
-            recent_conv = recent_conv[:-1]  # Take out the last one
-            recent_conv.insert(
-                0, {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
-            )
-        else:
-            recent_conv = [
-                {"role": "system", "content": f"<metadata>{metadata}</metadata>"}
-            ]
-
-    character = uprofile["character"]
-    auto_routing = uprofile["auto_routing"]
-    if auto_routing:
-        cc_row = sys_sql3_table.get("chat-completion")
-        _provider, _model_name = cc_row["provider"], cc_row["model_name"]
-        agent_router = llm_factory.create_chat_llm(
-            _provider, _model_name, "router", True
-        )
-        local_msg = await local_msg.edit_text(
-            "<b>Progress</b>: <i>ROUTING</i>", parse_mode=ParseMode.HTML
-        )
-        character, find_best_agent_usage = await find_best_agent(
-            agent_router, prompt, recent_conv[-3:]
-        )
-        # Clean Up
-        find_best_agent_message = (
-            f"<b>Progress</b>: <i>CALLING {myconfig.CHARACTER[character]['name']}</i>"
-        )
-        find_best_agent_message += (
-            f"\n<b>Usage:</b>\nInput: {find_best_agent_usage.input_tokens}"
-        )
-        find_best_agent_message += f"\nOutput: {find_best_agent_usage.output_tokens}\nTotal: {find_best_agent_usage.total_tokens}"
-
-        local_msg = await local_msg.edit_text(
-            find_best_agent_message, parse_mode=ParseMode.HTML
-        )
-        uprofile["usage"][_provider] += find_best_agent_usage.total_tokens
-
-    specialized_agent = llm_factory.create_chat_llm(
-        uprofile["platform_t2t"], uprofile["model_t2t"], character, False
-    )
-    responses, chat_token_usage = await call_llm(
-        specialized_agent,
-        prompt,
-        context=recent_conv,
-        mode=ResponseMode.DEFAULT,
-        response_format=None,
-    )
-    final_response_content = responses[-1]["content"]
-
-    # Clean Up
-    umemory.push(
-        {"role": CreatorRole.ASSISTANT.value, "content": final_response_content}
-    )
-    user_sql3_table.set(identifier, uprofile)
-    uprofile["usage"][uprofile["platform_t2t"]] += chat_token_usage.total_tokens
-    chat_memory_dict[identifier] = umemory
-    complete_message = "<b>Progress</b>: <i>DONE</i>"
-    complete_message += f"\n<b>Usage:</b>\nInput: {chat_token_usage.input_tokens}"
-    complete_message += f"\nOutput: {chat_token_usage.output_tokens}\nTotal: {chat_token_usage.total_tokens}"
-
-    local_msg = await local_msg.edit_text(complete_message, parse_mode=ParseMode.HTML)
-    # Output generated response
-    return final_response_content
 
 
 def remove_related_to_file(mem: ShortTermMemory, file_prefix: str) -> ShortTermMemory:
@@ -945,7 +827,7 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
 
         assert prompt == umemory.to_list()[-1]["content"]
 
-        final_response_content = await ai_ops(
+        final_response_content = await call_ai_ops(
             message, identifier, chat_memory, llm_factory
         )
         # Output generated response
@@ -1032,7 +914,9 @@ async def photo_handler(update: Update, context: CallbackContext):
         if message.caption:
             prompt += f"\nCaption={message.caption}"
 
-        generated_content = await ai_ops(message, identifier, chat_memory, llm_factory)
+        generated_content = await call_ai_ops(
+            message, identifier, chat_memory, llm_factory
+        )
         await reply(message, generated_content)
     logger.info("Released lock for user: %s", identifier)
 
@@ -1080,7 +964,9 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         if umemory is None:
             raise ValueError("Memory is None.")
 
-        generated_content = await ai_ops(message, identifier, chat_memory, llm_factory)
+        generated_content = await call_ai_ops(
+            message, identifier, chat_memory, llm_factory
+        )
         await reply(message, generated_content)
     logger.info("Released lock for user: %s", identifier)
 
@@ -1254,7 +1140,7 @@ async def document_handler(update: Update, context: CallbackContext) -> None:
         """
         content_window = int(min(llm.context_length * 0.75, 20_000))
         templated_prompt = prompt.replace("${{CONTENT}}", content[:content_window])
-        responses, usage = await call_llm(
+        responses, usage = await call_cc(
             llm,
             prompt=templated_prompt,
             context=None,
