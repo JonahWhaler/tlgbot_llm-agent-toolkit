@@ -2,7 +2,7 @@ import os
 import json
 import re
 import logging
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
 import telegram
 from telegram import Message
@@ -210,7 +210,7 @@ async def process_audio_input(
 async def call_ii(
     ii: ImageInterpreter, prompt: str, context: list[dict] | None, filepath: str
 ) -> tuple[list[dict], TokenUsage]:
-    MAX_RETRY = 5
+    MAX_RETRY = 3
     iteration = 0
     while iteration < MAX_RETRY:
         try:
@@ -223,12 +223,18 @@ async def call_ii(
             )
             return responses, usage
         except ValueError as ve:
-            if context and str(ve) == "max_output_tokens <= 0":
-                context = context[1:]
-                iteration += 1
-            else:
+            if str(ve) != "max_output_tokens <= 0":
                 raise
-    raise ValueError(f"max_output_tokens <= 0. Retry up to {MAX_RETRY} times.")
+            logger.warning("call_ii: max_output_tokens <= 0")
+            if context is None or len(context) == 0:
+                raise
+            logger.warning("Reduce context length and try again.")
+            context = context[1:]
+            iteration += 1
+        except Exception as e:
+            logger.error("call_ii: Exception: %s", e)
+            break
+    raise ValueError(f"call_ii FAILED. Tried {iteration} times.")
 
 
 async def image_interpreter_pipeline(
@@ -248,6 +254,38 @@ async def image_interpreter_pipeline(
     )
     profile["usage"][platform] += usage.total_tokens
     return output_string, profile
+
+
+async def call_cc(
+    llm: Core,
+    prompt: str,
+    context: list[dict],
+    mode: ResponseMode,
+    response_format: Any,
+) -> tuple[list[dict], TokenUsage]:
+    MAX_RETRY = 5
+    iteration = 0
+    while iteration < MAX_RETRY:
+        logger.info("Attempt: %d", iteration)
+        try:
+            responses, usage = await llm.run_async(
+                query=prompt, context=context, mode=mode, format=response_format
+            )
+            logger.info(
+                "[call_llm]\nResponses: %d\nToken Usage: %s", len(responses), usage
+            )
+            return responses, usage
+        except ValueError as ve:
+            if "max_output_tokens <= 0" in str(ve):
+                context = context[1:]
+                iteration += 1
+            else:
+                logger.error("call_llm: ValueError: %s", ve)
+                iteration += 1
+        except Exception as e:
+            logger.error("call_llm: Exception: %s", e)
+            raise
+    raise ValueError(f"max_output_tokens <= 0. Retry up to {MAX_RETRY} times.")
 
 
 async def reply(
