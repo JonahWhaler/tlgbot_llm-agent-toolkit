@@ -266,26 +266,27 @@ async def call_cc(
     MAX_RETRY = 5
     iteration = 0
     while iteration < MAX_RETRY:
-        logger.info("Attempt: %d", iteration)
         try:
             responses, usage = await llm.run_async(
                 query=prompt, context=context, mode=mode, format=response_format
             )
             logger.info(
-                "[call_llm]\nResponses: %d\nToken Usage: %s", len(responses), usage
+                "[call_cc]\nResponses: %d\nToken Usage: %s", len(responses), usage
             )
             return responses, usage
         except ValueError as ve:
-            if "max_output_tokens <= 0" in str(ve):
-                context = context[1:]
-                iteration += 1
-            else:
-                logger.error("call_llm: ValueError: %s", ve)
-                iteration += 1
+            if str(ve) != "max_output_tokens <= 0":
+                raise
+            logger.warning("call_cc: max_output_tokens <= 0")
+            if context is None or len(context) == 0:
+                raise
+            logger.warning("Reduce context length and try again.")
+            context = context[1:]
+            iteration += 1
         except Exception as e:
-            logger.error("call_llm: Exception: %s", e)
-            raise
-    raise ValueError(f"max_output_tokens <= 0. Retry up to {MAX_RETRY} times.")
+            logger.error("call_cc: Exception: %s", e)
+            break
+    raise ValueError(f"call_cc FAILED. Tried {iteration} times.")
 
 
 async def reply(
