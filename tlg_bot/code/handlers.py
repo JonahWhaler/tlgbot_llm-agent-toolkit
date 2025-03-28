@@ -182,16 +182,14 @@ async def call_llm(
 async def ai_ops(
     tlg_msg: telegram.Message,
     identifier: str,
-    umemory: ShortTermMemory,
+    chat_memory_dict: dict[str, ShortTermMemory],
     llm_factory: LLMFactory,
 ):
-    global chat_memory
-
     local_msg = await tlg_msg.reply_text("<b>START</b>", parse_mode=ParseMode.HTML)
     sys_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "system", False)
     user_sql3_table = SQLite3_Storage(myconfig.DB_PATH, "user_profile", False)
     uprofile: dict = user_sql3_table.get(identifier)
-
+    umemory: ShortTermMemory = chat_memory_dict.get(identifier, None)
     recent_conv = umemory.last_n(myconfig.MEMORY_LEN)
     assert (
         len(recent_conv) >= 1
@@ -257,7 +255,7 @@ async def ai_ops(
     )
     user_sql3_table.set(identifier, uprofile)
     uprofile["usage"][uprofile["platform_t2t"]] += chat_token_usage.total_tokens
-    chat_memory[identifier] = umemory
+    chat_memory_dict[identifier] = umemory
     complete_message = "<b>Progress</b>: <i>DONE</i>"
     complete_message += f"\n<b>Usage:</b>\nInput: {chat_token_usage.input_tokens}"
     complete_message += f"\nOutput: {chat_token_usage.output_tokens}\nTotal: {chat_token_usage.total_tokens}"
@@ -1039,7 +1037,9 @@ async def message_handler(update: Update, context: CallbackContext) -> None:
 
         assert prompt == umemory.to_list()[-1]["content"]
 
-        final_response_content = await ai_ops(message, identifier, umemory, llm_factory)
+        final_response_content = await ai_ops(
+            message, identifier, chat_memory, llm_factory
+        )
         # Output generated response
         await reply(message, final_response_content)
     logger.info("Released lock for user: %s", identifier)
@@ -1124,7 +1124,7 @@ async def photo_handler(update: Update, context: CallbackContext):
         if message.caption:
             prompt += f"\nCaption={message.caption}"
 
-        generated_content = await ai_ops(message, identifier, umemory, llm_factory)
+        generated_content = await ai_ops(message, identifier, chat_memory, llm_factory)
         await reply(message, generated_content)
     logger.info("Released lock for user: %s", identifier)
 
@@ -1172,7 +1172,7 @@ async def voice_handler(update: Update, context: CallbackContext) -> None:
         if umemory is None:
             raise ValueError("Memory is None.")
 
-        generated_content = await ai_ops(message, identifier, umemory, llm_factory)
+        generated_content = await ai_ops(message, identifier, chat_memory, llm_factory)
         await reply(message, generated_content)
     logger.info("Released lock for user: %s", identifier)
 
