@@ -51,9 +51,6 @@ def run_bot(bot: Application) -> None:
     bot.add_handler(CommandHandler("new", handlers.reset_chatmemory_handler), group=1)
     bot.add_handler(CommandHandler("clear", handlers.reset_user_handler), group=1)
     bot.add_handler(CommandHandler("usage", handlers.show_usage), group=1)
-    # bot.add_handler(
-    #     CommandHandler("compress", handlers.compress_memory_handler), group=1
-    # )
     bot.add_handler(
         CommandHandler("mycharacter", handlers.show_character_handler), group=1
     )
