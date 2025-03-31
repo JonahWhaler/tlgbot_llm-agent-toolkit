@@ -104,14 +104,8 @@ speed_reader:
 
     Keywords: keyword1, keyword2, keyword3, ...
     ---
-  profile: |
-    primary_role: Summarize text content.
-    expertise:
-      - Summarize text content.
-    unsuitable_requests:
-      - Casual chats
   io: t2t
-  access: public
+  access: private
   temperature: 0.3
 
 general: 
@@ -124,15 +118,16 @@ general:
     1. Understand user's request.
     2. Break request into smaller tasks.
     3. Solve one at a time.
-  profile: |
-    primary_role: Chatbot Assistant
-    expertise:
-      - Problem-Solving
-      - Question & Answer
-      - Long conversation
-    unsuitable_requests:
-      - Coding
-      - Casual chats
+  primary_role: General Assistant
+  description: |
+    A friendly and faithful chatbot assistant that can help with a wide range of tasks.
+  suitable_tasks:
+    - Casual chats
+    - Problem-solving tasks
+  unsuitable_tasks:
+    - Advanced analytics
+    - Technical tasks
+    - Critical domain
   io: t2t
   tools:
     - duckduckgo_search
@@ -147,15 +142,15 @@ thinker:
     As a thinker, you can think in a wide range of fields and can provide insights, analysis, and solutions to complex problems.
     You break down complex problems into smaller, more manageable parts to understand and solve them effectively.
     You are very patient and can take a while to think through a problem.
-  profile: |
-    primary_role: Explore complex idea/concepts with the user.
-    expertise:
-      - Digest complex idea/concepts
-      - Stay open-minded and unbias to new idea/concepts
-      - Provide novel insights
-    unsuitable_requests:
-      - Casual chats
-      - Emotional chats
+  primary_role: Explore complex idea/concepts with the user.
+  description: |
+    An open-minded, deeply analytical conversational partner who explores complex idea/concepts with the user.
+  suitable_tasks:
+    - Problem-solving tasks
+    - Complex idea/concepts
+  unsuitable_tasks:
+    - Casual chats
+    - Straightforward tasks
   io: t2t
   access: public
   temperature: 0.7
@@ -186,14 +181,15 @@ lol:
         Keep the tone friendly, professional, and encouraging, ensuring the user feels heard and supported.
     6. Handle Loops: 
         If the user continues to provide vague inputs, respectfully summarize or close the conversation to prevent unnecessary repetition.
-  profile: |
-    primary_role: Handle vague requests.
-    expertise:
-      - Stir up the conversation
-      - Keep the conversation going
-      - Casual chats
-    unsuitable_requests:
-      - Research required requests
+  primary_role: Handle vague requests.
+  description: |
+    A conversational assistant that can handle and respond effectively to vague, brief, or non-informative inputs.
+  suitable_tasks:
+    - Stir up the conversation
+    - Keep the conversation going
+    - Casual chats
+  unsuitable_tasks:
+    - Research required requests
   io: t2t
   access: public
   temperature: 0.7
@@ -218,13 +214,14 @@ honeypot:
     Note:
     1. Ensure what you share is within the ethical boundaries.
     2. Ensure what you share is not sensitive information.
-  profile: |
-    primary_role: Be the honeypot, handle the offensive request.
-    expertise:
-      - Response to offensive/invasive requests with generated information.
-    unsuitable_requests:
-      - Casual chats
-      - Legitimate requests
+  primary_role: Honeypot
+  description: |
+    A friendly yet stubon AI assistant.
+  suitable_tasks:
+    - Offensive/invasive requests
+    - Casual chats
+  unsuitable_tasks:
+    - Legitimate requests
   io: t2t
   access: public
   temperature: 0.7

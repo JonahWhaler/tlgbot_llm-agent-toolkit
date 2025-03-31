@@ -24,64 +24,63 @@ from llms import LLMFactory, IIResponse
 
 from mystorage import SQLite3_Storage
 from myconfig import CHARACTER, DEFAULT_CHARACTER, DB_PATH, MEMORY_LEN, DEBUG
+from route_strategy import AgentProfile, OneShotRouting, RouteStrategy
 
 logger = logging.getLogger(__name__)
 
 
+def get_agents_available() -> list[AgentProfile]:
+    agents: list[AgentProfile] = []
+    for character, character_dict in CHARACTER.items():
+        if character_dict["access"] == "private":
+            continue
+
+        # logger.info("Loading Character: %s", character)
+        _agent = AgentProfile(
+            name=character,
+            primary_role=character_dict["primary_role"],
+            description=character_dict["description"],
+            suitable_tasks=character_dict["suitable_tasks"],
+            unsuitable_tasks=character_dict["unsuitable_tasks"],
+        )
+        if "tools" in character_dict:
+            _agent.tools = character_dict["tools"]
+        agents.append(_agent)
+    return agents
+
+
 async def find_best_agent(
-    agent_router: Core, prompt: str, context: list[dict] | None
+    strategy: RouteStrategy,
+    prompt: str,
+    context: list[dict] | None,
+    agent_information: list[AgentProfile],
+    default_agent: str = DEFAULT_CHARACTER,
 ) -> tuple[str, TokenUsage]:
-    # Input
-    agents = []
-    for character in CHARACTER.keys():
-        if CHARACTER[character]["io"] == "i2t":
-            continue
-
-        if CHARACTER[character]["access"] == "private":
-            continue
-
-        agent_object = {
-            "name": character,
-            "profile": CHARACTER[character]["profile"],
-        }
-        t = CHARACTER[character].get("tools", None)
-        # heavily rely on the tool name, no further description here.
-        if t:
-            agent_object["tools"] = t
-        agents.append(agent_object)
-
-    input_prompt = {"request": prompt, "agents": agents}
-    if context:
-        input_prompt["context"] = context
-
-    # This step makes the prompt unnecessarily long
-    # TODO: Optimization needed
-    templated_prompt = json.dumps(input_prompt, ensure_ascii=False)
-    logger.warning("Templated Prompt LENGTH: %d", len(templated_prompt))
-    responses, usage = await agent_router.run_async(
-        query=templated_prompt, context=None, mode=ResponseMode.JSON
-    )
-
-    # Output
-    content = responses[0]["content"]
+    usage = TokenUsage(input_tokens=0, output_tokens=0)
     try:
-        output_object = json.loads(content)
-        best_agent = output_object.get("agent", DEFAULT_CHARACTER)
+        router_response, usage = await strategy.route(
+            prompt=prompt, context=context, agents_information=agent_information
+        )
+        best_agent = router_response.agents[0].name
+        # reason = router_response.agents[0].reason
+        # score = router_response.agents[0].relevant_score
 
-        if best_agent not in CHARACTER.keys():
+        agent_options = [agent.name for agent in agent_information]
+        if best_agent not in agent_options:
             logger.warning("Attempted to use unknown agent: %s", best_agent)
             logger.warning("Falling back to default agent.")
-            best_agent = DEFAULT_CHARACTER
-        reason = output_object.get("reason", "No reason provided.")
-        logger.warning(
-            "[find_best_agent]\nPick %s. \nReason: %s\nToken Usage: %s",
-            best_agent,
-            reason,
-            usage,
-        )
+            best_agent = default_agent
+        else:
+            logger.info("[find_best_agent]: %s", strategy.__class__.__name__)
+            for agent in router_response.agents:
+                logger.info(">>>> Agent: %s", agent)
         return best_agent, usage
     except json.JSONDecodeError:
-        return DEFAULT_CHARACTER, usage
+        logger.error("find_best_agent: JSONDecodeError")
+        return default_agent, usage
+    except Exception as e:
+        logger.error("find_best_agent: Exception: %s", e)
+        return default_agent, usage
 
 
 async def update_preference(
@@ -461,9 +460,20 @@ async def call_ai_ops(
         local_msg = await local_msg.edit_text(
             progress_string, parse_mode=ParseMode.HTML
         )
+
+        logger.warning("===== Routing =====")
+        agents = get_agents_available()
+        osr = OneShotRouting(agent_router, top_n=3)
         character, fba_usage = await find_best_agent(
-            agent_router, prompt, recent_conv[-3:]
+            osr, prompt, recent_conv[-3:], agents, character
         )
+
+        # logger.warning("===== OneByOneRouting =====")
+        # obor = OneByOneRouting(agent_router, top_n=3)
+        # character, fba_usage = await find_best_agent(
+        #     obor, prompt, recent_conv[-3:], agents, character
+        # )
+
         # Clean Up
         progress_string += "\n<b>Routing Token Usage:</b>"
         progress_string += f"\n >> Input: {fba_usage.input_tokens}"
