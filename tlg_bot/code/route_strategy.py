@@ -162,7 +162,7 @@ class OneByOneRouting:
             structured_input = {
                 "request": prompt,
                 "agent": agent.model_dump_json(exclude_none=True),
-                "task": "Grade the agent's relevance to user's request.",
+                "task": "Assess the agent's relevance to user's request.",
             }
             if context:
                 structured_input["context"] = context
