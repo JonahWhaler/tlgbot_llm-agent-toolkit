@@ -32,33 +32,41 @@ extractor:
   access: private
   temperature: 0.7
 
-router:
+router_oneshot:
   name: Router 🤖
   system_prompt: |
     Pick an AI agent which has the relevant knowledge or skillsets to handle user's request.
     Maintaining a coherent conversation is also essential.
-    
-    JSON Input:
-    {
-        \"request\": {{User's request}},
-        \"agents\": [
-            {
-                \"name\": {{Agent name}},
-                \"system_prompt\": {{Agent system prompt}},
-                \"tools\": {{Agent tools}}"
-            }
-        ]
-    }
-    * If available, context will be provided to help handle vague or context dependent requests.
-    
-    JSON Output:
-    {
-        \"reason\": {{Reason}},
-        \"agent\": {{Agent name}}
-    }
+
+    SelectedAgent:
+      name (str): 
+        Agent name
+      reason (str): 
+        Why this agent is relevant to the user's request.
+      relevant_score (float): 
+        From 0.0 to 1.0. The higher the score, the more relevant this agent is to the user's request.
+
   io: t2t
   access: private
-  temperature: 0.7
+  temperature: 0.3
+
+router_onebyone:
+  name: Router 🤖
+  system_prompt: |
+    Task: Given a user's request, context (if available) and agent's profile, evaluate the relevancy of the agent to the user's request.
+    Maintaining a coherent conversation is also essential.
+
+    SelectedAgent:
+      name (str): 
+        Agent name
+      reason (str): 
+        Why this agent is relevant to the user's request.
+      relevant_score (float): 
+        From 0.0 to 1.0. The higher the score, the more relevant this agent is to the user's request.
+
+  io: t2t
+  access: private
+  temperature: 0.3
 
 seer:
   name: Seey 👀
