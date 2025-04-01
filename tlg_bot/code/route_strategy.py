@@ -6,8 +6,11 @@ import json
 import logging
 from typing import Optional, Protocol, runtime_checkable
 from pydantic import BaseModel
-from llm_agent_toolkit import Core, ResponseMode
+from llm_agent_toolkit import ChatCompletionConfig, Core, ResponseMode
+from llm_agent_toolkit.core import open_ai, gemini
 from llm_agent_toolkit._util import TokenUsage
+
+from myconfig import CHARACTER
 
 logger = logging.getLogger(__name__)
 
