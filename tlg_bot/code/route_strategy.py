@@ -157,6 +157,7 @@ class OneByOneRouting:
         agents_information: list[AgentProfile],
     ) -> tuple[RouterResponse, TokenUsage]:
         agent_list = []
+        token_usage = TokenUsage(input_tokens=0, output_tokens=0)
         for agent in agents_information:
             # Step 1 - Build structured input
             structured_input = {
@@ -174,7 +175,8 @@ class OneByOneRouting:
                 mode=ResponseMode.SO,
                 format=SelectedAgent,
             )
-            responses, token_usage = response_tuple
+            responses, _token_usage = response_tuple
+            token_usage += _token_usage
 
             # Step 3 - Validate response structure
             response = responses[-1]
