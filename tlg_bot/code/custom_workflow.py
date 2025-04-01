@@ -10,6 +10,7 @@ from telegram.ext import CallbackContext
 from telegram.error import TelegramError
 from telegram.constants import ParseMode
 from llm_agent_toolkit import (
+    # ChatCompletionConfig,
     Core,
     CreatorRole,
     ResponseMode,
@@ -452,27 +453,18 @@ async def call_ai_ops(
     if auto_routing:
         cc_row = sys_sql3_table.get("chat-completion")
         _provider, _model_name = cc_row["provider"], cc_row["model_name"]
-        agent_router = llm_factory.create_chat_llm(
-            _provider, _model_name, "router", True
-        )
         routing_dt = datetime.now().strftime("%Y-%m-%d %H:%M")
         progress_string += f"\n<b>ROUTING</b>: {routing_dt}"
         local_msg = await local_msg.edit_text(
             progress_string, parse_mode=ParseMode.HTML
         )
 
-        logger.warning("===== Routing =====")
         agents = get_agents_available()
-        osr = OneShotRouting(agent_router, top_n=3)
+        logger.warning("===== Routing =====")
+        osr = OneShotRouting(_provider, _model_name, top_n=3)
         character, fba_usage = await find_best_agent(
             osr, prompt, recent_conv[-3:], agents, character
         )
-
-        # logger.warning("===== OneByOneRouting =====")
-        # obor = OneByOneRouting(agent_router, top_n=3)
-        # character, fba_usage = await find_best_agent(
-        #     obor, prompt, recent_conv[-3:], agents, character
-        # )
 
         # Clean Up
         progress_string += "\n<b>Routing Token Usage:</b>"

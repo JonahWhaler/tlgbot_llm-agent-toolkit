@@ -41,9 +41,29 @@ class RouteStrategy(Protocol):
     ) -> tuple[RouterResponse, TokenUsage]: ...
 
 
+def create_router(
+    provider: str, model_name: str, config: dict, system_prompt: str
+) -> Core:
+    if provider not in ["openai", "gemini"]:
+        raise ValueError("Invalid provider. Supported providers: ['openai', 'gemini']")
+
+    config = ChatCompletionConfig(name=model_name, **config)
+    if provider == "openai":
+        return open_ai.StructuredOutput(system_prompt=system_prompt, config=config)
+    return gemini.StructuredOutput(system_prompt=system_prompt, config=config)
+
+
 class OneShotRouting:
-    def __init__(self, router: Core, top_n: int = 1):
-        self.router = router
+    def __init__(self, provider: str, model_name: str, top_n: int = 1):
+        system_prompt = CHARACTER["router_oneshot"]["system_prompt"]
+        config = {
+            "temperature": CHARACTER["router_oneshot"]["temperature"],
+            "return_n": 1,
+            "max_iteration": 1,
+            "max_token": 2048,
+            "max_output_tokens": 1024,
+        }
+        self.router = create_router(provider, model_name, config, system_prompt)
         self.top_n = top_n
 
     async def route(
@@ -110,8 +130,21 @@ class OneShotRouting:
 
 
 class OneByOneRouting:
-    def __init__(self, router: Core, top_n: int = 1):
-        self.router = router
+    def __init__(
+        self,
+        provider: str,
+        model_name: str,
+        top_n: int = 1,
+    ):
+        system_prompt = CHARACTER["router_onebyone"]["system_prompt"]
+        config = {
+            "temperature": CHARACTER["router_onebyone"]["temperature"],
+            "return_n": 1,
+            "max_iteration": 1,
+            "max_token": 2048,
+            "max_output_tokens": 1024,
+        }
+        self.router = create_router(provider, model_name, config, system_prompt)
         self.top_n = top_n
 
     async def route(
