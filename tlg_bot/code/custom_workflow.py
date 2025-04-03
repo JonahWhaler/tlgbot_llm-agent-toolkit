@@ -274,7 +274,11 @@ async def call_cc(
     while iteration < MAX_RETRY:
         try:
             responses, usage = await llm.run_async(
-                query=prompt, context=context, mode=mode, format=response_format
+                query=prompt,
+                context=context,
+                mode=mode,
+                format=response_format,
+                include_rc=False,
             )
             logger.info(
                 "[call_cc]\nResponses: %d\nToken Usage: %s", len(responses), usage
