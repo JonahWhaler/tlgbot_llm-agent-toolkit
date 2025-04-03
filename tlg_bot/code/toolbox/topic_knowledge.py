@@ -103,7 +103,7 @@ class TopicQueryTool(Tool):
             logger.info("Loading file: %s", file_path)
             with open(file_path, "r", encoding="utf-8") as f:
                 text = f.read()
-                K = len(text) * 0.5 / min(encoder.ctx_length, 2048)
+                K = len(text) / min(encoder.ctx_length, 2048)
                 K = max(int(K), 1)
                 logger.info("K: %d", K)
                 if K == 1:
