@@ -2,14 +2,15 @@ import logging
 from typing import Optional
 from pydantic import BaseModel
 
-from llm_agent_toolkit import Core, ChatCompletionConfig  # type: ignore
-from llm_agent_toolkit._core import ImageInterpreter
+from llm_agent_toolkit import Core, ChatCompletionConfig, ImageInterpreter  # type: ignore
 from llm_agent_toolkit.core import (
     local,
     open_ai,
     deep_seek,
     gemini,
-)  #  local aka Ollama
+)
+
+# local aka Ollama
 import chromadb
 
 # from agent_tools import ToolFactory
