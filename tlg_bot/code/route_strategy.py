@@ -7,7 +7,7 @@ import logging
 from typing import Optional, Protocol, runtime_checkable
 from pydantic import BaseModel
 from llm_agent_toolkit import ChatCompletionConfig, Core, ResponseMode
-from llm_agent_toolkit.core import open_ai, gemini
+from llm_agent_toolkit.core import open_ai, gemini, deep_seek
 from llm_agent_toolkit._util import TokenUsage
 
 from myconfig import CHARACTER
@@ -47,13 +47,17 @@ class RouteStrategy(Protocol):
 def create_router(
     provider: str, model_name: str, config: dict, system_prompt: str
 ) -> Core:
-    if provider not in ["openai", "gemini"]:
+    if provider not in ["openai", "gemini", "deepseek"]:
         raise ValueError("Invalid provider. Supported providers: ['openai', 'gemini']")
 
     config = ChatCompletionConfig(name=model_name, **config)
     if provider == "openai":
         return open_ai.StructuredOutput(system_prompt=system_prompt, config=config)
-    return gemini.StructuredOutput(system_prompt=system_prompt, config=config)
+
+    if provider == "gemini":
+        return gemini.StructuredOutput(system_prompt=system_prompt, config=config)
+
+    return deep_seek.Text_to_Text_SO(system_prompt=system_prompt, config=config)
 
 
 class OneShotRouting:
@@ -68,6 +72,7 @@ class OneShotRouting:
         }
         self.router = create_router(provider, model_name, config, system_prompt)
         self.top_n = top_n
+        self.__provider = provider
 
     async def route(
         self,
@@ -87,12 +92,26 @@ class OneShotRouting:
             structured_input["context"] = context
 
         # Step 2 - Run
-        response_tuple: tuple[list[dict], TokenUsage] = await self.router.run_async(
-            query=json.dumps(structured_input, ensure_ascii=False),
-            context=None,
-            mode=ResponseMode.SO,
-            format=RouterResponse,
-        )
+        if self.__provider == "deepseek":
+            # At this point, DeepSeek does not support StructuredOutput directly.
+            # Use JSON instead.
+            response_tuple: tuple[list[dict], TokenUsage] = await self.router.run_async(
+                query=json.dumps(structured_input, ensure_ascii=False),
+                context=[
+                    {
+                        "role": "user",
+                        "content": f"JSON Response Format: \n---\n{RouterResponse.model_json_schema()}\n---",
+                    }
+                ],
+                mode=ResponseMode.JSON,
+            )
+        else:
+            response_tuple: tuple[list[dict], TokenUsage] = await self.router.run_async(
+                query=json.dumps(structured_input, ensure_ascii=False),
+                context=None,
+                mode=ResponseMode.SO,
+                format=RouterResponse,
+            )
         responses, token_usage = response_tuple
 
         # Step 3 - Validate response structure
@@ -149,6 +168,7 @@ class OneByOneRouting:
         }
         self.router = create_router(provider, model_name, config, system_prompt)
         self.top_n = top_n
+        self.__provider = provider
 
     async def route(
         self,
@@ -169,12 +189,31 @@ class OneByOneRouting:
                 structured_input["context"] = context
 
             # Step 2 - Run
-            response_tuple: tuple[list[dict], TokenUsage] = await self.router.run_async(
-                query=json.dumps(structured_input, ensure_ascii=False),
-                context=None,
-                mode=ResponseMode.SO,
-                format=SelectedAgent,
-            )
+            # Step 2 - Run
+            if self.__provider == "deepseek":
+                # At this point, DeepSeek does not support StructuredOutput directly.
+                # Use JSON instead.
+                response_tuple: tuple[list[dict], TokenUsage] = (
+                    await self.router.run_async(
+                        query=json.dumps(structured_input, ensure_ascii=False),
+                        context=[
+                            {
+                                "role": "user",
+                                "content": f"JSON Response Format: \n---\n{SelectedAgent.model_json_schema()}\n---",
+                            }
+                        ],
+                        mode=ResponseMode.JSON,
+                    )
+                )
+            else:
+                response_tuple: tuple[list[dict], TokenUsage] = (
+                    await self.router.run_async(
+                        query=json.dumps(structured_input, ensure_ascii=False),
+                        context=None,
+                        mode=ResponseMode.SO,
+                        format=SelectedAgent,
+                    )
+                )
             responses, _token_usage = response_tuple
             token_usage += _token_usage
 
