@@ -1,5 +1,5 @@
 import logging
-
+from typing import Optional
 from pydantic import BaseModel
 
 from llm_agent_toolkit import Core, ChatCompletionConfig  # type: ignore
@@ -34,6 +34,159 @@ class LLMFactory:
             vdb=vdb, web_db=webcache, user_vdb=user_vdb, encoder_config=encoder_config
         )
 
+    def __create_openai_chat_llm(
+        self,
+        model_name: str,
+        system_prompt: str,
+        config: ChatCompletionConfig,
+        tools: Optional[list] = None,
+        structured_output: bool = False,
+        **kwargs,
+    ) -> Core:
+        if open_ai.OpenAICore.csv_path is None:
+            open_ai.OpenAICore.load_csv("/config/openai.csv")
+
+        if model_name in ["o1-mini", "o3-mini"]:
+            reasoning_effort = kwargs.get("reasoning_effort", "medium")
+            config.temperature = 1.0
+            return open_ai.Reasoning_Core(
+                system_prompt=system_prompt,
+                config=config,
+                reasoning_effort=reasoning_effort,
+            )
+        if structured_output:
+            return open_ai.StructuredOutput(system_prompt=system_prompt, config=config)
+
+        tool_list: list | None = None
+        if tools:
+            tool_list = []
+            freeuse_llm = open_ai.Text_to_Text(
+                system_prompt="You are a helpful assistant.",
+                config=config,
+                tools=None,
+            )
+            for t in tools:
+                tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                if tool is None:
+                    logger.warning("Requested tool not found. %s", t)
+                    continue
+                tool_list.append(tool)
+
+        return open_ai.Text_to_Text(
+            system_prompt=system_prompt, config=config, tools=tool_list
+        )
+
+    def __create_deepseek_chat_llm(
+        self,
+        model_name: str,
+        system_prompt: str,
+        config: ChatCompletionConfig,
+        tools: Optional[list] = None,
+        structured_output: bool = False,
+        **kwargs,
+    ) -> Core:
+        if model_name in ["deepseek-reasoner"]:
+            return deep_seek.Reasoner_Core(system_prompt=system_prompt, config=config)
+
+        if structured_output:
+            return deep_seek.Text_to_Text_SO(system_prompt=system_prompt, config=config)
+
+        tool_list: list | None = None
+        if tools:
+            tool_list = []
+            freeuse_llm = deep_seek.Text_to_Text(
+                system_prompt="You are a helpful assistant.",
+                config=config,
+                tools=None,
+            )
+            for t in tools:
+                tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                if tool is None:
+                    logger.warning("Requested tool not found. %s", t)
+                    continue
+                tool_list.append(tool)
+
+        return deep_seek.Text_to_Text(system_prompt=system_prompt, config=config)
+
+    def __create_gemini_chat_llm(
+        self,
+        model_name: str,
+        system_prompt: str,
+        config: ChatCompletionConfig,
+        tools: Optional[list] = None,
+        structured_output: bool = False,
+        **kwargs,
+    ) -> Core:
+        if gemini.GeminiCore.csv_path is None:
+            gemini.GeminiCore.load_csv("/config/gemini.csv")
+
+        if model_name in [
+            "gemini-2.0-flash-thinking-exp-01-21",
+            "gemini-2.5-pro-exp-03-25",
+        ]:
+            return gemini.Thinking_Core(system_prompt=system_prompt, config=config)
+
+        if structured_output:
+            return gemini.StructuredOutput(system_prompt=system_prompt, config=config)
+
+        tool_list: list | None = None
+        if tools:
+            tool_list = []
+            freeuse_llm = gemini.Text_to_Text(
+                system_prompt="You are a helpful assistant.", config=config
+            )
+            for t in tools:
+                tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                if tool is None:
+                    logger.warning("Requested tool not found. %s", t)
+                    continue
+                tool_list.append(tool)
+
+        return gemini.Text_to_Text_W_Tool(
+            system_prompt=system_prompt, config=config, tools=tool_list
+        )
+
+    def __create_ollama_chat_llm(
+        self,
+        model_name: str,
+        system_prompt: str,
+        config: ChatCompletionConfig,
+        tools: Optional[list] = None,
+        structured_output: bool = False,
+        **kwargs,
+    ) -> Core:
+        if local.OllamaCore.csv_path is None:
+            local.OllamaCore.load_csv("/config/ollama.csv")
+
+        if structured_output:
+            return local.Image_to_Text_SO(
+                connection_string=OLLAMA_HOST,
+                system_prompt=system_prompt,
+                config=config,
+            )
+
+        tool_list: list | None = None
+        if tools:
+            tool_list = []
+            freeuse_llm = local.Text_to_Text(
+                connection_string=OLLAMA_HOST,
+                system_prompt="You are a helpful assistant.",
+                config=config,
+            )
+            for t in tools:
+                tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
+                if tool is None:
+                    logger.warning("Requested tool not found. %s", t)
+                    continue
+                tool_list.append(tool)
+
+        return local.Text_to_Text(
+            connection_string=OLLAMA_HOST,
+            system_prompt=system_prompt,
+            config=config,
+            tools=tool_list,
+        )
+
     def create_chat_llm(
         self,
         platform: str,
@@ -62,135 +215,40 @@ class LLMFactory:
         )
 
         system_prompt = CHARACTER[character]["system_prompt"]
-
+        tools = CHARACTER[character].get("tools", None)
         llm: Core | None
         if platform == "ollama":
-            if local.OllamaCore.csv_path is None:
-                local.OllamaCore.load_csv("/config/ollama.csv")
-
-            if structured_output:
-                llm = local.Text_to_Text_SO(
-                    connection_string=OLLAMA_HOST,
-                    system_prompt=system_prompt,
-                    config=config,
-                )
-            else:
-                tools = CHARACTER[character].get("tools", None)
-                tool_list: list | None = None
-                if tools:
-                    tool_list = []
-                    freeuse_llm = local.Text_to_Text(
-                        connection_string=OLLAMA_HOST,
-                        system_prompt="You are a helpful assistant.",
-                        config=config,
-                        tools=None,
-                    )
-                    for t in tools:
-                        tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
-                        if tool is None:
-                            raise ValueError(f"Requested tool not found. {t}")
-                        tool_list.append(tool)
-
-                llm = local.Text_to_Text(
-                    connection_string=OLLAMA_HOST,
-                    system_prompt=system_prompt,
-                    config=config,
-                    tools=tool_list,
-                )
+            llm = self.__create_ollama_chat_llm(
+                model_name=model_name,
+                system_prompt=system_prompt,
+                config=config,
+                tools=tools,
+                structured_output=structured_output,
+            )
         elif platform == "openai":
-            if open_ai.OpenAICore.csv_path is None:
-                open_ai.OpenAICore.load_csv("/config/openai.csv")
-            if config.name in ["o1-mini", "o3-mini"]:
-                if config.temperature != 1.0:
-                    logger.warning("Force %s temperature to 1.0", config.name)
-                    config.temperature = 1.0
-                llm = open_ai.Reasoning_Core(
-                    system_prompt=system_prompt,
-                    config=config,
-                    reasoning_effort="medium",
-                )
-            else:
-                if structured_output:
-                    llm = open_ai.OAI_StructuredOutput_Core(
-                        system_prompt=system_prompt, config=config
-                    )
-                else:
-                    tools = CHARACTER[character].get("tools", None)
-                    tool_list: list | None = None
-                    if tools:
-                        tool_list = []
-                        freeuse_llm = open_ai.Text_to_Text(
-                            system_prompt="You are a helpful assistant.",
-                            config=config,
-                            tools=None,
-                        )
-                        for t in tools:
-                            tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
-                            if tool is None:
-                                raise ValueError(f"Requested tool not found. {t}")
-                            tool_list.append(tool)
-
-                    llm = open_ai.Text_to_Text(
-                        system_prompt=system_prompt, config=config, tools=tool_list
-                    )
+            llm = self.__create_openai_chat_llm(
+                model_name=model_name,
+                system_prompt=system_prompt,
+                config=config,
+                tools=tools,
+                structured_output=structured_output,
+            )
         elif platform == "gemini":
-            if gemini.GeminiCore.csv_path is None:
-                gemini.GeminiCore.load_csv("/config/gemini.csv")
-            if structured_output:
-                llm = gemini.GMN_StructuredOutput_Core(
-                    system_prompt=system_prompt, config=config
-                )
-            elif config.name in [
-                "gemini-2.0-flash-thinking-exp-01-21",
-                "gemini-2.5-pro-exp-03-25",
-            ]:
-                llm = gemini.Thinking_Core(system_prompt=system_prompt, config=config)
-            else:
-                tools = CHARACTER[character].get("tools", None)
-                tool_list: list | None = None
-                if tools:
-                    tool_list = []
-                    freeuse_llm = gemini.Text_to_Text(
-                        system_prompt="You are a helpful assistant.",
-                        config=config,
-                    )
-                    for t in tools:
-                        tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
-                        if tool is None:
-                            raise ValueError(f"Requested tool not found. {t}")
-                        tool_list.append(tool)
-
-                llm = gemini.Text_to_Text_W_Tool(
-                    system_prompt=system_prompt, config=config, tools=tool_list
-                )
-                logger.info("Gemini LLM with Tools: %s [%s]", llm, tools)
+            llm = self.__create_gemini_chat_llm(
+                model_name=model_name,
+                system_prompt=system_prompt,
+                config=config,
+                tools=tools,
+                structured_output=structured_output,
+            )
         else:  # platform == "deepseek":
-            if structured_output:
-                llm = deep_seek.Text_to_Text_SO(
-                    system_prompt=system_prompt, config=config
-                )
-            elif config.name in ["deepseek-reasoner"]:
-                llm = deep_seek.Reasoner_Core(
-                    system_prompt=system_prompt, config=config
-                )
-            else:
-                tools = CHARACTER[character].get("tools", None)
-                tool_list: list | None = None
-                if tools:
-                    tool_list = []
-                    freeuse_llm = deep_seek.Text_to_Text(
-                        system_prompt="You are a helpful assistant.",
-                        config=config,
-                        tools=None,
-                    )
-                    for t in tools:
-                        tool = self.tool_factory.get(tool_name=t, llm=freeuse_llm)
-                        if tool is None:
-                            raise ValueError(f"Requested tool not found. {t}")
-                        tool_list.append(tool)
-                llm = deep_seek.Text_to_Text(
-                    system_prompt=system_prompt, config=config, tools=tool_list
-                )
+            llm = self.__create_deepseek_chat_llm(
+                model_name=model_name,
+                system_prompt=system_prompt,
+                config=config,
+                tools=tools,
+                structured_output=structured_output,
+            )
         return llm
 
     def create_image_interpreter(
