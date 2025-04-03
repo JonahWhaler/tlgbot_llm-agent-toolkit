@@ -28,7 +28,7 @@ I build this project to showcase the functionality and versability of my python 
 | Broadcast                | :brain:  | Allow system admin to push updates to users                                                                          |
 | Content Moderation       | :brain:  | Validate whether user\'s input and LLM\'s responses are compliance to the ethical boundary                           |
 | File Response            | :brain:  | Response to user with file with shareable link                                                                       |
-| Reasoning Models         | :brain:  | Integrate with reasoning models                                                                                      |
+| Reasoning Models         | :rocket:  | Integrate with reasoning models                                                                                      |
 | Group Support            | :brain:  | Let this bot live in group chat                                                                                      |
 | Edit Message             | :brain:  | Response to message edit                                                                                             |
 | Incoming Forward Message | :brain:  | Response to incoming message                                                                                         |
