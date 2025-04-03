@@ -100,11 +100,15 @@ class LLMFactory:
         elif platform == "openai":
             if open_ai.OpenAICore.csv_path is None:
                 open_ai.OpenAICore.load_csv("/config/openai.csv")
-            if config.name.startswith("o1"):
+            if config.name in ["o1-mini", "o3-mini"]:
                 if config.temperature != 1.0:
                     logger.warning("Force %s temperature to 1.0", config.name)
                     config.temperature = 1.0
-                llm = open_ai.O1Beta_OAI_Core(system_prompt="", config=config)
+                llm = open_ai.Reasoning_Core(
+                    system_prompt=system_prompt,
+                    config=config,
+                    reasoning_effort="medium",
+                )
             else:
                 if structured_output:
                     llm = open_ai.OAI_StructuredOutput_Core(
@@ -136,6 +140,11 @@ class LLMFactory:
                 llm = gemini.GMN_StructuredOutput_Core(
                     system_prompt=system_prompt, config=config
                 )
+            elif config.name in [
+                "gemini-2.0-flash-thinking-exp-01-21",
+                "gemini-2.5-pro-exp-03-25",
+            ]:
+                llm = gemini.Thinking_Core(system_prompt=system_prompt, config=config)
             else:
                 tools = CHARACTER[character].get("tools", None)
                 tool_list: list | None = None
@@ -158,6 +167,10 @@ class LLMFactory:
         else:  # platform == "deepseek":
             if structured_output:
                 llm = deep_seek.Text_to_Text_SO(
+                    system_prompt=system_prompt, config=config
+                )
+            elif config.name in ["deepseek-reasoner"]:
+                llm = deep_seek.Reasoner_Core(
                     system_prompt=system_prompt, config=config
                 )
             else:
